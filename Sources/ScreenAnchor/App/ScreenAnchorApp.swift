@@ -12,4 +12,11 @@ struct ScreenAnchorApp: App {
         }
         .menuBarExtraStyle(.window)
     }
+
+    init() {
+        // Prompt for accessibility permission on first launch
+        if !AccessibilityHelper.isTrusted {
+            AccessibilityHelper.requestAccess()
+        }
+    }
 }

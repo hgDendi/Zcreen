@@ -11,9 +11,10 @@ enum AccessibilityHelper {
         AXIsProcessTrustedWithOptions(options)
     }
 
-    static func ensureAccess() -> Bool {
-        if isTrusted { return true }
-        requestAccess()
-        return false
+    /// Open System Settings → Privacy & Security → Accessibility directly
+    static func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }

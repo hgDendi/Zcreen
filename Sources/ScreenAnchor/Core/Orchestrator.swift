@@ -11,6 +11,7 @@ final class Orchestrator: ObservableObject {
     let windowManager: WindowManager
     let snapshotStore: LayoutSnapshotStore
     let ruleEngine: RuleEngine
+    var snapBarController: SnapBarController
 
     private var cancellables = Set<AnyCancellable>()
     private var previousProfileKey: String = ""
@@ -22,6 +23,7 @@ final class Orchestrator: ObservableObject {
         windowManager = WindowManager()
         snapshotStore = LayoutSnapshotStore()
         ruleEngine = RuleEngine()
+        snapBarController = SnapBarController(windowManager: windowManager)
 
         previousProfileKey = screenDetector.profileKey
 

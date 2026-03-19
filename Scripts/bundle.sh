@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+
 APP_NAME="ScreenAnchor"
 BUILD_DIR=".build/release"
 APP_BUNDLE="${APP_NAME}.app"
