@@ -1,6 +1,9 @@
 import Foundation
+import CryptoKit
 
-final class LayoutSnapshotStore {
+final class LayoutSnapshotStore: ObservableObject {
+    @Published private(set) var savedProfileCount: Int = 0
+
     private let snapshotDir: URL
     private var cache: [String: LayoutSnapshot] = [:]
 
@@ -8,17 +11,15 @@ final class LayoutSnapshotStore {
         let configDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/screenanchor/snapshots")
         self.snapshotDir = configDir
-
-        // Ensure directory exists
         try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
-
         loadAll()
     }
 
     func save(snapshot: LayoutSnapshot) {
         cache[snapshot.profileKey] = snapshot
+        savedProfileCount = cache.count
 
-        let fileURL = snapshotDir.appendingPathComponent("\(sanitize(snapshot.profileKey)).json")
+        let fileURL = snapshotDir.appendingPathComponent("\(fileNameHash(snapshot.profileKey)).json")
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -26,67 +27,73 @@ final class LayoutSnapshotStore {
         do {
             let data = try encoder.encode(snapshot)
             try data.write(to: fileURL)
-            Log.snapshot.info("Saved snapshot for profile '\(snapshot.profileKey)' with \(snapshot.windows.count) windows")
+            Log.snapshot.info("Saved snapshot for '\(snapshot.profileLabel)' (\(snapshot.windows.count) windows)")
         } catch {
             Log.snapshot.error("Failed to save snapshot: \(error.localizedDescription)")
         }
     }
 
     func load(profileKey: String) -> LayoutSnapshot? {
-        if let cached = cache[profileKey] {
-            return cached
-        }
-
-        let fileURL = snapshotDir.appendingPathComponent("\(sanitize(profileKey)).json")
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
-        do {
-            let data = try Data(contentsOf: fileURL)
-            let snapshot = try decoder.decode(LayoutSnapshot.self, from: data)
-            cache[profileKey] = snapshot
-            return snapshot
-        } catch {
-            Log.snapshot.error("Failed to load snapshot for '\(profileKey)': \(error.localizedDescription)")
-            return nil
-        }
+        cache[profileKey]
     }
 
-    func captureSnapshot(profileKey: String, windowManager: WindowManager, screens: [ScreenInfo]) -> LayoutSnapshot {
+    func savedProfiles() -> [(key: String, label: String, windowCount: Int, date: Date)] {
+        cache.values
+            .sorted { $0.timestamp > $1.timestamp }
+            .map { (key: $0.profileKey, label: $0.profileLabel, windowCount: $0.windows.count, date: $0.timestamp) }
+    }
+
+    func captureSnapshot(profileKey: String, profileLabel: String, windowManager: WindowManager, screens: [ScreenInfo]) -> LayoutSnapshot {
         let allWindows = windowManager.getAllWindows()
         let windowSnapshots = allWindows.map { win -> WindowSnapshot in
-            let screenName = findScreen(for: win.frame, in: screens)?.name ?? "Unknown"
+            let screen = findScreen(for: win.frame, in: screens)
             return WindowSnapshot(
                 bundleId: win.bundleId ?? "",
                 appName: win.appName,
                 windowTitle: win.title,
                 frame: WindowSnapshot.CodableRect(win.frame),
-                screenName: screenName
+                screenName: screen?.name ?? "Unknown"
             )
         }
 
-        let snapshot = LayoutSnapshot(
+        return LayoutSnapshot(
             profileKey: profileKey,
+            profileLabel: profileLabel,
             timestamp: Date(),
             windows: windowSnapshots
         )
-        return snapshot
     }
 
     func restoreSnapshot(_ snapshot: LayoutSnapshot, windowManager: WindowManager, excludeBundleIds: Set<String>) {
         let allWindows = windowManager.getAllWindows()
 
-        for savedWindow in snapshot.windows {
-            guard !excludeBundleIds.contains(savedWindow.bundleId) else { continue }
+        // Group saved windows by bundleId, preserving order for multi-window apps
+        var savedByBundle: [String: [WindowSnapshot]] = [:]
+        for w in snapshot.windows where !excludeBundleIds.contains(w.bundleId) {
+            savedByBundle[w.bundleId, default: []].append(w)
+        }
 
-            // Find matching running window
-            if let runningWindow = allWindows.first(where: { $0.bundleId == savedWindow.bundleId }) {
-                windowManager.moveWindow(runningWindow.axWindow, toFrame: savedWindow.frame.cgRect)
-                Log.snapshot.info("Restored \(savedWindow.appName) to saved position")
+        // Group running windows by bundleId
+        var runningByBundle: [String: [WindowManager.WindowInfo]] = [:]
+        for w in allWindows {
+            let bid = w.bundleId ?? ""
+            if !excludeBundleIds.contains(bid) {
+                runningByBundle[bid, default: []].append(w)
             }
         }
+
+        var restored = 0
+        for (bundleId, savedWindows) in savedByBundle {
+            guard let runningWindows = runningByBundle[bundleId] else { continue }
+
+            // Match windows by index (best effort for multi-window apps)
+            for (i, savedWin) in savedWindows.enumerated() where i < runningWindows.count {
+                windowManager.moveWindow(runningWindows[i].axWindow, toFrame: savedWin.frame.cgRect)
+                restored += 1
+            }
+        }
+
+        Log.snapshot.info("Restored \(restored) windows from snapshot '\(snapshot.profileLabel)'")
     }
 
     // MARK: - Private
@@ -104,16 +111,18 @@ final class LayoutSnapshotStore {
                 cache[snapshot.profileKey] = snapshot
             }
         }
+        savedProfileCount = cache.count
         Log.snapshot.info("Loaded \(self.cache.count) cached snapshots")
     }
 
-    private func sanitize(_ key: String) -> String {
-        key.replacingOccurrences(of: "|", with: "_")
-            .replacingOccurrences(of: " ", with: "_")
+    /// SHA256 hash of profile key → short hex string for filename
+    private func fileNameHash(_ key: String) -> String {
+        let digest = SHA256.hash(data: Data(key.utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     private func findScreen(for windowFrame: CGRect, in screens: [ScreenInfo]) -> ScreenInfo? {
-        let windowCenter = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
-        return screens.first { $0.frame.contains(windowCenter) }
+        let center = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
+        return screens.first { $0.frame.contains(center) }
     }
 }

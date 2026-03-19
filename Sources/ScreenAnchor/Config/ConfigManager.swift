@@ -9,25 +9,26 @@ final class ConfigManager: ObservableObject {
     private let configFileURL: URL
     private var fileMonitor: DispatchSourceFileSystemObject?
 
+    var hasConfigFile: Bool {
+        FileManager.default.fileExists(atPath: configFileURL.path)
+    }
+
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         configDir = home.appendingPathComponent(".config/screenanchor")
         configFileURL = configDir.appendingPathComponent("config.json")
 
-        // Start with default config
-        configuration = Configuration.default
+        // Start with empty config (zero-config mode)
+        configuration = Configuration.empty
 
-        // Ensure directory exists
+        // Ensure directory exists (needed for snapshots)
         try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
 
-        // Load or create config file
+        // Load config file if it exists (optional — app works without it)
         if FileManager.default.fileExists(atPath: configFileURL.path) {
             loadConfig()
-        } else {
-            saveDefaultConfig()
+            watchConfigFile()
         }
-
-        watchConfigFile()
     }
 
     deinit {
@@ -35,12 +36,51 @@ final class ConfigManager: ObservableObject {
     }
 
     func reload() {
-        loadConfig()
+        if FileManager.default.fileExists(atPath: configFileURL.path) {
+            loadConfig()
+            if fileMonitor == nil { watchConfigFile() }
+        }
+    }
+
+    func createExampleConfig() {
+        let example = Configuration(
+            version: 1,
+            debounceMs: 500,
+            screens: [
+                ScreenAlias(alias: "dell-portrait", nameContains: "U2723QE"),
+                ScreenAlias(alias: "dell-main", nameContains: "UP2720Q"),
+                ScreenAlias(alias: "macbook", nameContains: "Built-in"),
+            ],
+            rules: [
+                Rule(app: AppMatcher(bundleId: "com.mitchellh.ghostty", nameContains: nil),
+                     targetScreen: "dell-portrait", profileOverrides: nil),
+                Rule(app: AppMatcher(bundleId: "com.google.Chrome", nameContains: nil),
+                     targetScreen: "dell-main",
+                     profileOverrides: ["2-screen": "macbook"]),
+            ],
+            profiles: [
+                "3-screen": ProfileDef(screenCount: 3),
+                "2-screen": ProfileDef(screenCount: 2),
+            ]
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        do {
+            let data = try encoder.encode(example)
+            try data.write(to: configFileURL)
+            loadConfig()
+            watchConfigFile()
+            Log.config.info("Example config created at \(self.configFileURL.path)")
+        } catch {
+            Log.config.error("Failed to create example config: \(error.localizedDescription)")
+        }
     }
 
     func openConfigInEditor() {
-        let url = configFileURL
-        NSWorkspace.shared.open(url)
+        if !hasConfigFile { createExampleConfig() }
+        NSWorkspace.shared.open(configFileURL)
     }
 
     var configFilePath: String {
@@ -52,34 +92,19 @@ final class ConfigManager: ObservableObject {
     private func loadConfig() {
         do {
             let data = try Data(contentsOf: configFileURL)
-            let decoder = JSONDecoder()
-            configuration = try decoder.decode(Configuration.self, from: data)
-            Log.config.info("Configuration loaded successfully with \(self.configuration.rules.count) rules")
+            configuration = try JSONDecoder().decode(Configuration.self, from: data)
+            Log.config.info("Config loaded: \(self.configuration.effectiveRules.count) rules")
         } catch {
             Log.config.error("Failed to load config: \(error.localizedDescription). Using defaults.")
-            configuration = Configuration.default
-        }
-    }
-
-    private func saveDefaultConfig() {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-
-        do {
-            let data = try encoder.encode(Configuration.default)
-            try data.write(to: configFileURL)
-            Log.config.info("Default configuration saved to \(self.configFileURL.path)")
-        } catch {
-            Log.config.error("Failed to save default config: \(error.localizedDescription)")
+            configuration = Configuration.empty
         }
     }
 
     private func watchConfigFile() {
+        fileMonitor?.cancel()
+
         let fd = open(configFileURL.path, O_EVTONLY)
-        guard fd >= 0 else {
-            Log.config.warning("Cannot watch config file")
-            return
-        }
+        guard fd >= 0 else { return }
 
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
@@ -89,16 +114,12 @@ final class ConfigManager: ObservableObject {
 
         source.setEventHandler { [weak self] in
             Log.config.info("Config file changed, reloading...")
-            // Small delay to ensure the file write is complete
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 self?.loadConfig()
             }
         }
 
-        source.setCancelHandler {
-            close(fd)
-        }
-
+        source.setCancelHandler { close(fd) }
         source.resume()
         fileMonitor = source
     }

@@ -11,7 +11,7 @@ final class RuleEngine {
     func matchRules(configuration: Configuration, screenCount: Int) -> [RuleMatch] {
         let profileName = configuration.profileName(for: screenCount)
 
-        return configuration.rules.compactMap { rule in
+        return configuration.effectiveRules.compactMap { rule in
             let targetAlias = rule.resolvedTargetScreen(for: profileName)
 
             // Only include if we have a bundleId to match
@@ -24,7 +24,7 @@ final class RuleEngine {
     func matchRule(for bundleId: String?, appName: String?, configuration: Configuration, screenCount: Int) -> RuleMatch? {
         let profileName = configuration.profileName(for: screenCount)
 
-        for rule in configuration.rules {
+        for rule in configuration.effectiveRules {
             if rule.app.matches(bundleId: bundleId, appName: appName) {
                 let targetAlias = rule.resolvedTargetScreen(for: profileName)
                 return RuleMatch(rule: rule, bundleId: bundleId ?? "", targetScreenAlias: targetAlias)

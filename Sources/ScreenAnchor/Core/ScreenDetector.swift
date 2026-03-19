@@ -5,18 +5,30 @@ import CoreGraphics
 final class ScreenDetector: ObservableObject {
     @Published private(set) var screens: [ScreenInfo] = []
     @Published private(set) var profileKey: String = ""
+    @Published private(set) var profileLabel: String = ""
 
     private let screenChangeSubject = PassthroughSubject<Void, Never>()
+    private let beginConfigSubject = PassthroughSubject<Void, Never>()
     private var cancellables = Set<AnyCancellable>()
     private var callbackRegistered = false
 
     var screenCount: Int { screens.count }
 
+    /// Fires after screen changes settle (debounced). Emits the new profileKey.
     var onScreensChanged: AnyPublisher<String, Never> {
         screenChangeSubject
             .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
-            .map { [weak self] in self?.profileKey ?? "" }
+            .map { [weak self] in
+                self?.refreshScreens()
+                return self?.profileKey ?? ""
+            }
             .eraseToAnyPublisher()
+    }
+
+    /// Fires immediately when macOS announces a display reconfiguration is about to begin.
+    /// Use this to save a snapshot BEFORE screens change and macOS rearranges windows.
+    var onBeginConfiguration: AnyPublisher<Void, Never> {
+        beginConfigSubject.eraseToAnyPublisher()
     }
 
     init() {
@@ -30,7 +42,8 @@ final class ScreenDetector: ObservableObject {
         }
     }
 
-    func refreshScreens() {
+    @discardableResult
+    func refreshScreens() -> String {
         let nsScreens = NSScreen.screens
         var infos: [ScreenInfo] = []
 
@@ -39,25 +52,32 @@ final class ScreenDetector: ObservableObject {
             let name = screen.localizedName
             let frame = screen.frame
             let isBuiltIn = CGDisplayIsBuiltin(displayID) != 0
+            let vendorID = CGDisplayVendorNumber(displayID)
+            let modelID = CGDisplayModelNumber(displayID)
+            let serialNumber = CGDisplaySerialNumber(displayID)
 
             infos.append(ScreenInfo(
                 displayID: displayID,
                 name: name,
                 frame: frame,
                 isBuiltIn: isBuiltIn,
-                position: .single // will be computed below
+                position: .single,
+                vendorID: vendorID,
+                modelID: modelID,
+                serialNumber: serialNumber
             ))
         }
 
-        // Sort by x position and assign positions
         infos.sort { $0.frame.origin.x < $1.frame.origin.x }
         screens = assignPositions(infos)
         profileKey = generateProfileKey(from: screens)
-        Log.screen.info("Detected \(self.screens.count) screens, profile: \(self.profileKey)")
+        profileLabel = generateProfileLabel(from: screens)
+        Log.screen.info("Detected \(self.screens.count) screens, profile: \(self.profileLabel) [\(self.profileKey)]")
+        return profileKey
     }
 
     func screenInfo(forAlias alias: String, configuration: Configuration) -> ScreenInfo? {
-        guard let screenAlias = configuration.screens.first(where: { $0.alias == alias }) else {
+        guard let screenAlias = configuration.screens?.first(where: { $0.alias == alias }) else {
             return nil
         }
         return screens.first { $0.name.localizedCaseInsensitiveContains(screenAlias.nameContains) }
@@ -65,7 +85,11 @@ final class ScreenDetector: ObservableObject {
 
     private func assignPositions(_ infos: [ScreenInfo]) -> [ScreenInfo] {
         guard infos.count > 1 else {
-            return infos.map { ScreenInfo(displayID: $0.displayID, name: $0.name, frame: $0.frame, isBuiltIn: $0.isBuiltIn, position: .single) }
+            return infos.map {
+                ScreenInfo(displayID: $0.displayID, name: $0.name, frame: $0.frame,
+                           isBuiltIn: $0.isBuiltIn, position: .single,
+                           vendorID: $0.vendorID, modelID: $0.modelID, serialNumber: $0.serialNumber)
+            }
         }
 
         return infos.enumerated().map { index, info in
@@ -77,12 +101,21 @@ final class ScreenDetector: ObservableObject {
             } else {
                 position = .center
             }
-            return ScreenInfo(displayID: info.displayID, name: info.name, frame: info.frame, isBuiltIn: info.isBuiltIn, position: position)
+            return ScreenInfo(displayID: info.displayID, name: info.name, frame: info.frame,
+                              isBuiltIn: info.isBuiltIn, position: position,
+                              vendorID: info.vendorID, modelID: info.modelID, serialNumber: info.serialNumber)
         }
     }
 
+    /// Profile key = sorted hardware unique keys joined with "+".
+    /// e.g. "1552-0-0+4268-16643-12345+4268-16644-67890"
     private func generateProfileKey(from screens: [ScreenInfo]) -> String {
-        screens.map { $0.shortName }.sorted().joined(separator: "|")
+        screens.map { $0.uniqueKey }.sorted().joined(separator: "+")
+    }
+
+    /// Human-readable label, e.g. "Built-in + U2723QE + UP2720Q"
+    private func generateProfileLabel(from screens: [ScreenInfo]) -> String {
+        screens.map { $0.shortName }.sorted().joined(separator: " + ")
     }
 
     private func registerCallback() {
@@ -92,7 +125,10 @@ final class ScreenDetector: ObservableObject {
     }
 
     fileprivate func handleDisplayChange(flags: CGDisplayChangeSummaryFlags) {
-        // Only respond to add/remove/moved events, not begin/complete config
+        if flags.contains(.beginConfigurationFlag) {
+            beginConfigSubject.send()
+        }
+
         if flags.contains(.addFlag) || flags.contains(.removeFlag) ||
            flags.contains(.movedFlag) || flags.contains(.setMainFlag) {
             screenChangeSubject.send()
@@ -103,8 +139,6 @@ final class ScreenDetector: ObservableObject {
 private func displayReconfigCallback(displayID: CGDirectDisplayID, flags: CGDisplayChangeSummaryFlags, userInfo: UnsafeMutableRawPointer?) {
     guard let userInfo else { return }
     let detector = Unmanaged<ScreenDetector>.fromOpaque(userInfo).takeUnretainedValue()
-
-    // CGDisplayReconfigurationCallback is called on an arbitrary thread
     DispatchQueue.main.async {
         detector.handleDisplayChange(flags: flags)
     }

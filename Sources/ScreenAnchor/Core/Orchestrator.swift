@@ -14,6 +14,7 @@ final class Orchestrator: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
     private var previousProfileKey: String = ""
+    private var hasSavedPreChangeSnapshot = false
 
     init() {
         screenDetector = ScreenDetector()
@@ -24,9 +25,13 @@ final class Orchestrator: ObservableObject {
 
         previousProfileKey = screenDetector.profileKey
 
+        setupBeginConfigHandler()
         setupScreenChangeHandler()
         setupAppLaunchHandler()
+        setupPeriodicAutoSave()
     }
+
+    // MARK: - Public actions
 
     func applyAllRules() {
         guard AccessibilityHelper.isTrusted else {
@@ -36,44 +41,64 @@ final class Orchestrator: ObservableObject {
         }
 
         let config = configManager.configuration
-        let matches = ruleEngine.matchRules(configuration: config, screenCount: screenDetector.screenCount)
+        guard !config.effectiveRules.isEmpty else {
+            lastAction = "No rules configured"
+            return
+        }
 
+        let matches = ruleEngine.matchRules(configuration: config, screenCount: screenDetector.screenCount)
         var applied = 0
+
         for match in matches {
             guard let targetScreen = screenDetector.screenInfo(forAlias: match.targetScreenAlias, configuration: config)
-            else {
-                Log.rule.warning("Target screen '\(match.targetScreenAlias)' not found for \(match.bundleId)")
-                continue
-            }
+            else { continue }
 
             let windows = windowManager.getWindows(bundleId: match.bundleId)
             for win in windows {
-                // Check if window is already on the target screen
-                if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) {
-                    continue
-                }
+                if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) { continue }
                 windowManager.moveWindowToScreen(win.axWindow, currentFrame: win.frame, targetScreen: targetScreen)
                 applied += 1
             }
         }
 
-        lastAction = "Applied \(applied) window moves"
+        lastAction = "Applied \(applied) rule moves"
         Log.rule.info("\(self.lastAction)")
     }
 
     func saveCurrentLayout() {
-        let profileKey = screenDetector.profileKey
+        guard AccessibilityHelper.isTrusted else {
+            lastAction = "Accessibility permission required"
+            AccessibilityHelper.requestAccess()
+            return
+        }
+
         let snapshot = snapshotStore.captureSnapshot(
-            profileKey: profileKey,
+            profileKey: screenDetector.profileKey,
+            profileLabel: screenDetector.profileLabel,
             windowManager: windowManager,
             screens: screenDetector.screens
         )
         snapshotStore.save(snapshot: snapshot)
         lastAction = "Saved layout (\(snapshot.windows.count) windows)"
-        Log.snapshot.info("\(self.lastAction)")
     }
 
-    // MARK: - Private
+    // MARK: - Pre-change snapshot (beginConfigurationFlag)
+
+    private func setupBeginConfigHandler() {
+        screenDetector.onBeginConfiguration
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                guard let self, self.autoApplyOnScreenChange, !self.hasSavedPreChangeSnapshot else { return }
+                guard AccessibilityHelper.isTrusted else { return }
+
+                self.hasSavedPreChangeSnapshot = true
+                self.autoSaveCurrentLayout()
+                Log.general.info("Pre-change snapshot saved for '\(self.screenDetector.profileLabel)'")
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: - Post-change restore
 
     private func setupScreenChangeHandler() {
         screenDetector.onScreensChanged
@@ -88,47 +113,52 @@ final class Orchestrator: ObservableObject {
         guard AccessibilityHelper.isTrusted else { return }
 
         let oldProfileKey = previousProfileKey
-        Log.general.info("Screen change: '\(oldProfileKey)' -> '\(newProfileKey)'")
+        let newLabel = screenDetector.profileLabel
+        Log.general.info("Screen change: '\(oldProfileKey)' -> '\(newProfileKey)' (\(newLabel))")
 
-        // Step 1: Save current layout to old profile (before screens actually change)
-        // Note: By this point the screens have already changed, so we capture what we can
-        screenDetector.refreshScreens()
+        // Reset pre-change flag
+        hasSavedPreChangeSnapshot = false
 
-        // Step 2: Apply rules first (higher priority)
+        // Determine which apps have rules (they get priority)
         let config = configManager.configuration
-        let matches = ruleEngine.matchRules(configuration: config, screenCount: screenDetector.screenCount)
-        let ruleBundleIds = Set(matches.map { $0.bundleId })
+        let hasRules = !config.effectiveRules.isEmpty
+        var ruleBundleIds = Set<String>()
 
-        for match in matches {
-            guard let targetScreen = screenDetector.screenInfo(forAlias: match.targetScreenAlias, configuration: config)
-            else { continue }
+        if hasRules {
+            let matches = ruleEngine.matchRules(configuration: config, screenCount: screenDetector.screenCount)
+            ruleBundleIds = Set(matches.map { $0.bundleId })
 
-            let windows = windowManager.getWindows(bundleId: match.bundleId)
-            for win in windows {
-                if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) {
-                    continue
+            // Apply rules first
+            for match in matches {
+                guard let targetScreen = screenDetector.screenInfo(forAlias: match.targetScreenAlias, configuration: config)
+                else { continue }
+
+                let windows = windowManager.getWindows(bundleId: match.bundleId)
+                for win in windows {
+                    if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) { continue }
+                    windowManager.moveWindowToScreen(win.axWindow, currentFrame: win.frame, targetScreen: targetScreen)
                 }
-                windowManager.moveWindowToScreen(win.axWindow, currentFrame: win.frame, targetScreen: targetScreen)
             }
         }
 
-        // Step 3: Restore snapshot for non-rule apps
+        // Restore snapshot for remaining (non-rule) apps
         if let snapshot = snapshotStore.load(profileKey: newProfileKey) {
             snapshotStore.restoreSnapshot(snapshot, windowManager: windowManager, excludeBundleIds: ruleBundleIds)
-            Log.snapshot.info("Restored snapshot for profile '\(newProfileKey)'")
+            lastAction = "Restored layout for \(newLabel)"
+        } else {
+            lastAction = "New screen combo: \(newLabel) (no saved layout yet)"
+            Log.snapshot.info("No saved snapshot for '\(newLabel)', windows stay as-is")
         }
 
-        // Step 4: Save new layout state
-        let newSnapshot = snapshotStore.captureSnapshot(
-            profileKey: newProfileKey,
-            windowManager: windowManager,
-            screens: screenDetector.screens
-        )
-        snapshotStore.save(snapshot: newSnapshot)
-
         previousProfileKey = newProfileKey
-        lastAction = "Screen changed: applied rules + restored layout"
+
+        // Auto-save the new layout after a settle delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.autoSaveCurrentLayout()
+        }
     }
+
+    // MARK: - App launch rules
 
     private func setupAppLaunchHandler() {
         NSWorkspace.shared.notificationCenter
@@ -145,10 +175,12 @@ final class Orchestrator: ObservableObject {
     private func handleAppLaunch(_ app: NSRunningApplication) {
         guard AccessibilityHelper.isTrusted else { return }
 
+        let config = configManager.configuration
+        guard !config.effectiveRules.isEmpty else { return }
+
         let bundleId = app.bundleIdentifier
         let appName = app.localizedName
 
-        let config = configManager.configuration
         guard let match = ruleEngine.matchRule(
             for: bundleId, appName: appName,
             configuration: config,
@@ -158,18 +190,41 @@ final class Orchestrator: ObservableObject {
         guard let targetScreen = screenDetector.screenInfo(forAlias: match.targetScreenAlias, configuration: config)
         else { return }
 
-        // Small extra delay to ensure window is created
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self else { return }
             let windows = self.windowManager.getWindows(bundleId: match.bundleId)
             for win in windows {
-                if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) {
-                    continue
-                }
+                if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) { continue }
                 self.windowManager.moveWindowToScreen(win.axWindow, currentFrame: win.frame, targetScreen: targetScreen)
             }
-            Log.rule.info("Applied launch rule: \(appName ?? "unknown") -> \(match.targetScreenAlias)")
+            Log.rule.info("Launch rule: \(appName ?? "unknown") -> \(match.targetScreenAlias)")
             self.lastAction = "Moved \(appName ?? "app") to \(match.targetScreenAlias)"
         }
+    }
+
+    // MARK: - Periodic auto-save
+
+    private func setupPeriodicAutoSave() {
+        Timer.publish(every: 120, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self, AccessibilityHelper.isTrusted else { return }
+                self.autoSaveCurrentLayout()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func autoSaveCurrentLayout() {
+        guard AccessibilityHelper.isTrusted else { return }
+
+        let snapshot = snapshotStore.captureSnapshot(
+            profileKey: screenDetector.profileKey,
+            profileLabel: screenDetector.profileLabel,
+            windowManager: windowManager,
+            screens: screenDetector.screens
+        )
+
+        guard !snapshot.windows.isEmpty else { return }
+        snapshotStore.save(snapshot: snapshot)
     }
 }

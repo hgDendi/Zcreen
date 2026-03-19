@@ -14,12 +14,20 @@ struct ScreenInfo: Identifiable {
     let frame: CGRect
     let isBuiltIn: Bool
     let position: ScreenPosition
+    let vendorID: UInt32
+    let modelID: UInt32
+    let serialNumber: UInt32
 
     var id: CGDirectDisplayID { displayID }
 
+    /// Stable hardware-based unique key for this physical display.
+    /// Format: "vendorID-modelID-serialNumber"
+    var uniqueKey: String {
+        "\(vendorID)-\(modelID)-\(serialNumber)"
+    }
+
     var shortName: String {
         if isBuiltIn { return "Built-in" }
-        // Extract model name like "U2723QE" from "DELL U2723QE"
         let parts = name.split(separator: " ")
         if parts.count > 1 {
             return String(parts.last!)

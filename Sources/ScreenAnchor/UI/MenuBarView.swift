@@ -5,11 +5,13 @@ struct MenuBarView: View {
     @State private var launchAtLogin = LoginItemManager.isEnabled
 
     private var screenDetector: ScreenDetector { orchestrator.screenDetector }
+    private var snapshotStore: LayoutSnapshotStore { orchestrator.snapshotStore }
     private var isTrusted: Bool { AccessibilityHelper.isTrusted }
+    private var hasRules: Bool { !orchestrator.configManager.configuration.effectiveRules.isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Status
+            // Accessibility warning
             if !isTrusted {
                 Label("Accessibility Permission Required", systemImage: "exclamationmark.triangle.fill")
                     .foregroundColor(.orange)
@@ -24,6 +26,7 @@ struct MenuBarView: View {
                 Divider().padding(.vertical, 4)
             }
 
+            // Current profile
             Label("\(screenDetector.screens.count) screen\(screenDetector.screens.count == 1 ? "" : "s") detected",
                   systemImage: "display")
                 .padding(.horizontal, 8)
@@ -50,6 +53,13 @@ struct MenuBarView: View {
                 .padding(.vertical, 1)
             }
 
+            // Saved profiles count
+            Text("\(snapshotStore.savedProfileCount) layout\(snapshotStore.savedProfileCount == 1 ? "" : "s") saved")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+
             if !orchestrator.lastAction.isEmpty {
                 Divider().padding(.vertical, 4)
                 Text(orchestrator.lastAction)
@@ -61,12 +71,14 @@ struct MenuBarView: View {
             Divider().padding(.vertical, 4)
 
             // Actions
-            Button {
-                orchestrator.applyAllRules()
-            } label: {
-                Label("Apply All Rules Now", systemImage: "arrow.right.square")
+            if hasRules {
+                Button {
+                    orchestrator.applyAllRules()
+                } label: {
+                    Label("Apply All Rules Now", systemImage: "arrow.right.square")
+                }
+                .disabled(!isTrusted)
             }
-            .disabled(!isTrusted)
 
             Button {
                 orchestrator.saveCurrentLayout()
@@ -79,26 +91,30 @@ struct MenuBarView: View {
 
             // Toggles
             Toggle(isOn: $orchestrator.autoApplyOnScreenChange) {
-                Text("Auto-apply on screen change")
+                Text("Auto-restore on screen change")
             }
             .toggleStyle(.checkbox)
             .padding(.horizontal, 8)
 
-            Toggle(isOn: $orchestrator.autoApplyOnAppLaunch) {
-                Text("Auto-apply on app launch")
+            if hasRules {
+                Toggle(isOn: $orchestrator.autoApplyOnAppLaunch) {
+                    Text("Auto-apply rules on app launch")
+                }
+                .toggleStyle(.checkbox)
+                .padding(.horizontal, 8)
             }
-            .toggleStyle(.checkbox)
-            .padding(.horizontal, 8)
 
             Divider().padding(.vertical, 4)
 
-            // Config
+            // Config (optional)
             Button("Edit Config...") {
                 orchestrator.configManager.openConfigInEditor()
             }
 
-            Button("Reload Config") {
-                orchestrator.configManager.reload()
+            if orchestrator.configManager.hasConfigFile {
+                Button("Reload Config") {
+                    orchestrator.configManager.reload()
+                }
             }
 
             Divider().padding(.vertical, 4)
@@ -136,7 +152,7 @@ struct MenuBarView: View {
         Multi-screen window manager for macOS.
         Automatically saves and restores window layouts when screens change.
 
-        Config: \(orchestrator.configManager.configFilePath)
+        No configuration needed — just plug/unplug your displays.
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")

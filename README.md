@@ -6,16 +6,37 @@
 
 ## English
 
-macOS menu bar app for multi-screen window management. Automatically saves and restores window layouts when displays are connected/disconnected.
+macOS menu bar app for multi-screen window management. Automatically saves and restores window layouts when displays are connected or disconnected.
+
+**Zero configuration needed** — just install and forget. Works across different locations and screen combos.
 
 ### Features
 
-- **Layout Snapshots** — Remembers window positions for each screen configuration
-- **App Rules** — Pin specific apps to specific screens (e.g., terminal always on left portrait display)
-- **Auto-restore** — When screens change, automatically restores the last known layout
-- **Profile Overrides** — Different rules for 2-screen vs 3-screen setups
-- **Hot-reload Config** — Edit the JSON config file and changes apply immediately
+- **Auto save/restore** — Remembers window positions per screen combo, restores them when you reconnect
+- **Hardware-based screen ID** — Uses display vendor/model/serial to identify physical monitors, not names
+- **Multi-location support** — Seamlessly handles different setups (e.g., office 3-screen vs. home 2-screen)
+- **Pre-change capture** — Saves layout before macOS rearranges windows on disconnect
+- **Periodic auto-save** — Keeps snapshots up to date every 2 minutes
+- **Optional app rules** — Power users can pin specific apps to specific screens via config file
+- **Hot-reload config** — Edit the config file and changes apply immediately
 - **Launch at Login** — Optional auto-start on boot
+
+### How it works
+
+Each unique combination of physical displays gets its own layout profile, identified by hardware IDs (`CGDisplayVendorNumber` + `CGDisplayModelNumber` + `CGDisplaySerialNumber`).
+
+```
+Office 3-screen:  MacBook + DELL U2723QE + DELL UP2720Q  →  profile A
+Office 2-screen:  MacBook + DELL U2723QE                 →  profile B
+Home 2-screen:    MacBook + Apple Studio Display          →  profile C
+```
+
+When you unplug/plug a display:
+
+1. **Pre-change save** — Captures current window positions before macOS moves them
+2. **Detect new combo** — Identifies which physical screens are connected
+3. **Restore snapshot** — If this combo was seen before, restores the saved window positions
+4. **Apply rules** — If configured, moves specific apps to target screens (optional)
 
 ### Requirements
 
@@ -36,88 +57,50 @@ make bundle
 open ScreenAnchor.app
 ```
 
-Manual build:
+### Configuration (optional)
 
-```bash
-swift build -c release
-bash Scripts/bundle.sh
-cp -R ScreenAnchor.app ~/Applications/
-```
+**ScreenAnchor works out of the box with zero config.** The snapshot system automatically saves/restores layouts for each screen combination.
 
-### Configuration
+For power users who want to pin specific apps to screens, create a config file:
 
-Config file: `~/.config/screenanchor/config.json`
+Config path: `~/.config/screenanchor/config.json`
 
-A default config is created on first run. Edit it to match your setup:
+You can also click **"Edit Config..."** in the menu bar to create an example config.
 
 ```json
 {
   "version": 1,
-  "debounceMs": 500,
   "screens": [
     { "alias": "dell-portrait", "nameContains": "U2723QE" },
-    { "alias": "dell-main", "nameContains": "UP2720Q" },
     { "alias": "macbook", "nameContains": "Built-in" }
   ],
   "rules": [
     {
       "app": { "bundleId": "com.mitchellh.ghostty" },
       "targetScreen": "dell-portrait"
-    },
-    {
-      "app": { "bundleId": "com.google.Chrome" },
-      "targetScreen": "dell-main",
-      "profileOverrides": { "2-screen": "macbook" }
     }
-  ],
-  "profiles": {
-    "3-screen": { "screenCount": 3 },
-    "2-screen": { "screenCount": 2 }
-  }
+  ]
 }
 ```
-
-#### Screen aliases
-
-Map display names to short aliases. `nameContains` does a case-insensitive substring match against `NSScreen.localizedName`.
-
-#### Rules
-
-- `app.bundleId` — The app's bundle identifier
-- `targetScreen` — Which screen alias to move the app to
-- `profileOverrides` — Override the target for specific screen-count profiles
 
 #### Finding bundle IDs
 
 ```bash
 osascript -e 'id of app "Google Chrome"'
-# or
-lsappinfo list | grep bundleID
 ```
-
-### How it works
-
-1. **Screen change detected** via `CGDisplayReconfigurationCallback`
-2. Wait 500ms debounce (macOS fires multiple events)
-3. Save current window positions as a snapshot for the old screen profile
-4. Apply app rules (move rule-matched apps to target screens)
-5. Restore saved snapshot for the new screen profile (non-rule apps)
-6. Save the new layout state
-
-When an app launches, if it matches a rule, it's moved to the target screen after a short delay.
 
 ### Data storage
 
-- Config: `~/.config/screenanchor/config.json`
 - Snapshots: `~/.config/screenanchor/snapshots/`
+- Config (optional): `~/.config/screenanchor/config.json`
 
 ### Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| Accessibility Permission Required | System Settings > Privacy & Security > Accessibility > enable ScreenAnchor |
-| Windows not moving | Ensure the app is ad-hoc signed (`bundle.sh` does this automatically) |
-| Screen names don't match | Check screen names in the menu bar dropdown, update `nameContains` in config |
+| Accessibility permission required | System Settings > Privacy & Security > Accessibility > enable ScreenAnchor |
+| Windows not moving | Ensure the app is ad-hoc signed (`bundle.sh` does this) |
+| First time with a screen combo | Arrange windows manually, they'll be saved automatically |
 
 ---
 
@@ -125,14 +108,35 @@ When an app launches, if it matches a rule, it's moved to the target screen afte
 
 macOS 菜单栏应用，用于多屏窗口管理。自动保存和恢复显示器插拔时的窗口布局。
 
+**零配置即用** — 安装后即可使用，无需任何配置。支持多地点、多种屏幕组合自由切换。
+
 ### 功能特性
 
-- **布局快照** — 记忆每种屏幕组合下的窗口位置
-- **应用规则** — 固定应用到指定屏幕（如终端始终在左侧竖屏）
-- **自动恢复** — 屏幕变化时自动恢复上次已知的布局
-- **多配置支持** — 二屏/三屏可设置不同规则
-- **配置热更新** — 编辑 JSON 配置文件后立即生效
+- **自动保存/恢复** — 记忆每种屏幕组合下的窗口位置，重新连接时自动恢复
+- **硬件级屏幕识别** — 使用显示器厂商/型号/序列号识别物理屏幕，而非名称
+- **多地点支持** — 无缝处理不同场所的屏幕配置（如公司三屏 vs 家里二屏）
+- **变化前捕获** — 在 macOS 重排窗口之前保存当前布局
+- **定时自动保存** — 每 2 分钟自动保存一次当前快照
+- **可选应用规则** — 高级用户可通过配置文件将特定应用固定到指定屏幕
+- **配置热更新** — 编辑配置文件后立即生效
 - **开机自启** — 可选的登录时自动启动
+
+### 工作原理
+
+每种物理显示器组合会生成唯一的布局配置，通过硬件 ID（`CGDisplayVendorNumber` + `CGDisplayModelNumber` + `CGDisplaySerialNumber`）识别。
+
+```
+公司三屏:  MacBook + DELL U2723QE + DELL UP2720Q  →  配置 A
+公司二屏:  MacBook + DELL U2723QE                 →  配置 B
+家里二屏:  MacBook + Apple Studio Display          →  配置 C
+```
+
+当你插拔显示器时：
+
+1. **变化前保存** — 在 macOS 移动窗口之前捕获当前布局
+2. **检测新组合** — 识别当前连接了哪些物理屏幕
+3. **恢复快照** — 如果这个组合之前见过，恢复保存的窗口位置
+4. **应用规则** — 如果配置了规则，将特定应用移到目标屏幕（可选）
 
 ### 系统要求
 
@@ -153,88 +157,50 @@ make bundle
 open ScreenAnchor.app
 ```
 
-手动构建：
+### 配置（可选）
 
-```bash
-swift build -c release
-bash Scripts/bundle.sh
-cp -R ScreenAnchor.app ~/Applications/
-```
+**ScreenAnchor 开箱即用，无需任何配置。** 快照系统会自动为每种屏幕组合保存和恢复布局。
 
-### 配置
+如果你希望将特定应用固定到指定屏幕，可以创建配置文件：
 
-配置文件路径：`~/.config/screenanchor/config.json`
+配置路径：`~/.config/screenanchor/config.json`
 
-首次运行会自动创建默认配置，根据你的屏幕环境修改即可：
+也可以点击菜单栏中的 **"Edit Config..."** 来创建示例配置。
 
 ```json
 {
   "version": 1,
-  "debounceMs": 500,
   "screens": [
     { "alias": "dell-portrait", "nameContains": "U2723QE" },
-    { "alias": "dell-main", "nameContains": "UP2720Q" },
     { "alias": "macbook", "nameContains": "Built-in" }
   ],
   "rules": [
     {
       "app": { "bundleId": "com.mitchellh.ghostty" },
       "targetScreen": "dell-portrait"
-    },
-    {
-      "app": { "bundleId": "com.google.Chrome" },
-      "targetScreen": "dell-main",
-      "profileOverrides": { "2-screen": "macbook" }
     }
-  ],
-  "profiles": {
-    "3-screen": { "screenCount": 3 },
-    "2-screen": { "screenCount": 2 }
-  }
+  ]
 }
 ```
-
-#### 屏幕别名
-
-将显示器名称映射为短别名。`nameContains` 对 `NSScreen.localizedName` 做大小写不敏感的子串匹配。
-
-#### 规则配置
-
-- `app.bundleId` — 应用的 Bundle Identifier
-- `targetScreen` — 目标屏幕别名
-- `profileOverrides` — 针对不同屏幕数量覆盖目标屏幕
 
 #### 查找 Bundle ID
 
 ```bash
 osascript -e 'id of app "Google Chrome"'
-# 或
-lsappinfo list | grep bundleID
 ```
-
-### 工作原理
-
-1. 通过 `CGDisplayReconfigurationCallback` 检测屏幕变化
-2. 500ms 防抖等待（macOS 会连续触发多次事件）
-3. 保存当前窗口位置快照到旧屏幕配置
-4. 执行应用规则（规则匹配的应用移到目标屏幕）
-5. 恢复新屏幕配置的历史快照（非规则应用）
-6. 保存新的布局状态
-
-应用启动时，如果匹配规则，会在短暂延迟后自动移动到目标屏幕。
 
 ### 数据存储
 
-- 配置：`~/.config/screenanchor/config.json`
 - 快照：`~/.config/screenanchor/snapshots/`
+- 配置（可选）：`~/.config/screenanchor/config.json`
 
 ### 常见问题
 
 | 问题 | 解决方案 |
 |------|----------|
 | 提示需要辅助功能权限 | 系统设置 > 隐私与安全性 > 辅助功能 > 启用 ScreenAnchor |
-| 窗口没有移动 | 确保应用已签名（`bundle.sh` 会自动进行 ad-hoc 签名） |
-| 屏幕名称不匹配 | 在菜单栏下拉菜单中查看屏幕名称，更新配置中的 `nameContains` |
+| 窗口没有移动 | 确保应用已签名（`bundle.sh` 会自动 ad-hoc 签名） |
+| 首次使用某屏幕组合 | 手动排列窗口，之后会自动保存 |
 
 ## License
 
