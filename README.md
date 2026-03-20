@@ -2,70 +2,85 @@
 
 [English](#english) | [中文](#中文)
 
+<p align="center">
+  <a href="https://github.com/hgDendi/ScreenAnchor/releases/latest">
+    <img src="https://img.shields.io/github/v/release/hgDendi/ScreenAnchor?style=flat-square&color=blue" alt="Latest Release">
+  </a>
+  <img src="https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
+</p>
+
 ---
 
 ## English
 
-macOS menu bar app for multi-screen window management. Automatically saves and restores window layouts when displays are connected or disconnected.
+macOS menu bar app for multi-screen window management. Zero configuration — just install and forget.
 
-**Zero configuration needed** — just install and forget. Works across different locations and screen combos.
+### [Download Latest Release](https://github.com/hgDendi/ScreenAnchor/releases/latest)
+
+> Download `ScreenAnchor.app.zip`, unzip, move to `~/Applications`, launch, and grant Accessibility permission.
 
 ### Features
 
-- **Auto save/restore** — Remembers window positions per screen combo, restores them when you reconnect
-- **Hardware-based screen ID** — Uses display vendor/model/serial to identify physical monitors, not names
-- **Multi-location support** — Seamlessly handles different setups (e.g., office 3-screen vs. home 2-screen)
-- **Pre-change capture** — Saves layout before macOS rearranges windows on disconnect
-- **Periodic auto-save** — Keeps snapshots up to date every 2 minutes
-- **Optional app rules** — Power users can pin specific apps to specific screens via config file
-- **Hot-reload config** — Edit the config file and changes apply immediately
-- **Launch at Login** — Optional auto-start on boot
+**Auto Layout Save & Restore**
+- Remembers every window's position for each unique screen combination
+- Uses hardware IDs (vendor/model/serial) to identify physical monitors
+- Automatically restores layout when screens are reconnected
+- Works seamlessly across different locations (e.g., office 3-screen vs home 2-screen)
 
-### How it works
+**Snap Bar**
+- Drag any window to trigger a floating layout bar at the top of the screen
+- Interactive zone groups — drag within a cell to pick the target area:
 
-Each unique combination of physical displays gets its own layout profile, identified by hardware IDs (`CGDisplayVendorNumber` + `CGDisplayModelNumber` + `CGDisplaySerialNumber`).
+  | Group | Zones |
+  |-------|-------|
+  | Full | Entire screen |
+  | Padded | 80% centered (10% margin each side) |
+  | ½ | Left / Right (drag to choose) |
+  | ⅓ | Left / Center / Right |
+  | ¼ | Top-left / Top-right / Bottom-left / Bottom-right |
 
-```
-Office 3-screen:  MacBook + DELL U2723QE + DELL UP2720Q  →  profile A
-Office 2-screen:  MacBook + DELL U2723QE                 →  profile B
-Home 2-screen:    MacBook + Apple Studio Display          →  profile C
-```
+- **Portrait-aware**: portrait screens get vertical splits (½ ↕, ⅓ ↕) with matching aspect ratio icons
+- Snapped layouts are automatically saved to the snapshot system
 
-When you unplug/plug a display:
+**Caffeinate**
+- Prevent display & idle sleep from the menu bar
+- Duration options: 1h / 2h / 4h
+- Shows countdown with stop button when active
 
-1. **Pre-change save** — Captures current window positions before macOS moves them
-2. **Detect new combo** — Identifies which physical screens are connected
-3. **Restore snapshot** — If this combo was seen before, restores the saved window positions
-4. **Apply rules** — If configured, moves specific apps to target screens (optional)
+**Menu Bar**
+- Current screen list with resolution badges
+- Click any screen to jump to Display Settings
+- Toggle auto-restore, snap bar, launch at login
+- Optional JSON config for power-user app-pinning rules
 
 ### Requirements
 
 - macOS 13+ (Ventura)
 - Apple Silicon or Intel Mac
-- Accessibility permission (prompted on first run)
+- Accessibility permission (prompted on first launch)
 
 ### Install
 
+**Option 1: Download**
+
+Download from [Releases](https://github.com/hgDendi/ScreenAnchor/releases/latest), unzip, move to `~/Applications`, and launch.
+
+**Option 2: Build from source**
+
 ```bash
 git clone https://github.com/hgDendi/ScreenAnchor.git && cd ScreenAnchor
-
-# Build + bundle + install to ~/Applications
-make install
-
-# Or just build and run
-make bundle
-open ScreenAnchor.app
+make install    # builds, bundles, and installs to ~/Applications
 ```
 
 ### Configuration (optional)
 
-**ScreenAnchor works out of the box with zero config.** The snapshot system automatically saves/restores layouts for each screen combination.
+ScreenAnchor works with zero config. For power users who want to pin specific apps to screens:
 
-For power users who want to pin specific apps to screens, create a config file:
-
-Config path: `~/.config/screenanchor/config.json`
-
-You can also click **"Edit Config..."** in the menu bar to create an example config.
+```bash
+# Click "Config" in the menu bar, or create manually:
+~/.config/screenanchor/config.json
+```
 
 ```json
 {
@@ -83,13 +98,9 @@ You can also click **"Edit Config..."** in the menu bar to create an example con
 }
 ```
 
-#### Finding bundle IDs
+Find bundle IDs: `osascript -e 'id of app "AppName"'`
 
-```bash
-osascript -e 'id of app "Google Chrome"'
-```
-
-### Data storage
+### Data
 
 - Snapshots: `~/.config/screenanchor/snapshots/`
 - Config (optional): `~/.config/screenanchor/config.json`
@@ -98,74 +109,81 @@ osascript -e 'id of app "Google Chrome"'
 
 | Problem | Solution |
 |---------|----------|
-| Accessibility permission required | System Settings > Privacy & Security > Accessibility > enable ScreenAnchor |
-| Windows not moving | Ensure the app is ad-hoc signed (`bundle.sh` does this) |
-| First time with a screen combo | Arrange windows manually, they'll be saved automatically |
+| Accessibility permission required | System Settings > Privacy & Security > Accessibility > add ScreenAnchor |
+| Permission lost after rebuild | Each build produces a new code signature; re-add in Accessibility settings |
+| Snap Bar not showing | Verify Accessibility permission is granted and restart the app |
 
 ---
 
 ## 中文
 
-macOS 菜单栏应用，用于多屏窗口管理。自动保存和恢复显示器插拔时的窗口布局。
+macOS 菜单栏应用，多屏窗口管理。零配置即用。
 
-**零配置即用** — 安装后即可使用，无需任何配置。支持多地点、多种屏幕组合自由切换。
+### [下载最新版本](https://github.com/hgDendi/ScreenAnchor/releases/latest)
+
+> 下载 `ScreenAnchor.app.zip`，解压，移动到 `~/Applications`，启动后授予辅助功能权限。
 
 ### 功能特性
 
-- **自动保存/恢复** — 记忆每种屏幕组合下的窗口位置，重新连接时自动恢复
-- **硬件级屏幕识别** — 使用显示器厂商/型号/序列号识别物理屏幕，而非名称
-- **多地点支持** — 无缝处理不同场所的屏幕配置（如公司三屏 vs 家里二屏）
-- **变化前捕获** — 在 macOS 重排窗口之前保存当前布局
-- **定时自动保存** — 每 2 分钟自动保存一次当前快照
-- **可选应用规则** — 高级用户可通过配置文件将特定应用固定到指定屏幕
-- **配置热更新** — 编辑配置文件后立即生效
-- **开机自启** — 可选的登录时自动启动
+**自动布局保存与恢复**
+- 记忆每种屏幕组合下所有窗口的位置
+- 通过硬件 ID（厂商/型号/序列号）识别物理显示器
+- 重新连接显示器时自动恢复布局
+- 不同地点无缝切换（如公司三屏 vs 家里二屏）
 
-### 工作原理
+**Snap Bar（拖拽布局）**
+- 拖拽任意窗口时，屏幕顶部自动弹出布局选择条
+- 交互式区域 — 在同一个格子内拖到不同位置选择不同布局：
 
-每种物理显示器组合会生成唯一的布局配置，通过硬件 ID（`CGDisplayVendorNumber` + `CGDisplayModelNumber` + `CGDisplaySerialNumber`）识别。
+  | 分组 | 区域 |
+  |------|------|
+  | Full | 全屏 |
+  | Padded | 80% 居中（四周留 10% 空隙）|
+  | ½ | 左 / 右（拖到对应侧选择）|
+  | ⅓ | 左 / 中 / 右 |
+  | ¼ | 左上 / 右上 / 左下 / 右下 |
 
-```
-公司三屏:  MacBook + DELL U2723QE + DELL UP2720Q  →  配置 A
-公司二屏:  MacBook + DELL U2723QE                 →  配置 B
-家里二屏:  MacBook + Apple Studio Display          →  配置 C
-```
+- **竖屏适配**：竖屏自动切换为纵向分割（½ ↕、⅓ ↕），预览图标匹配屏幕比例
+- 通过 Snap Bar 调整的布局自动保存
 
-当你插拔显示器时：
+**Caffeinate（防息屏）**
+- 在菜单栏中防止显示器和系统休眠
+- 可选时长：1h / 2h / 4h
+- 激活时显示倒计时和停止按钮
 
-1. **变化前保存** — 在 macOS 移动窗口之前捕获当前布局
-2. **检测新组合** — 识别当前连接了哪些物理屏幕
-3. **恢复快照** — 如果这个组合之前见过，恢复保存的窗口位置
-4. **应用规则** — 如果配置了规则，将特定应用移到目标屏幕（可选）
+**菜单栏**
+- 显示当前屏幕列表和分辨率
+- 点击屏幕跳转到系统显示器设置
+- 开关：自动恢复、Snap Bar、开机自启
+- 可选 JSON 配置文件（高级用户固定应用到指定屏幕）
 
 ### 系统要求
 
 - macOS 13+（Ventura）
 - Apple Silicon 或 Intel Mac
-- 辅助功能权限（首次运行时提示授权）
+- 辅助功能权限（首次启动时提示）
 
 ### 安装
 
+**方式一：直接下载**
+
+从 [Releases](https://github.com/hgDendi/ScreenAnchor/releases/latest) 下载，解压，移动到 `~/Applications`，启动即可。
+
+**方式二：源码构建**
+
 ```bash
 git clone https://github.com/hgDendi/ScreenAnchor.git && cd ScreenAnchor
-
-# 构建 + 打包 + 安装到 ~/Applications
-make install
-
-# 或者只构建运行
-make bundle
-open ScreenAnchor.app
+make install    # 构建 + 打包 + 安装到 ~/Applications
 ```
 
 ### 配置（可选）
 
-**ScreenAnchor 开箱即用，无需任何配置。** 快照系统会自动为每种屏幕组合保存和恢复布局。
+零配置即可使用。如需将特定应用固定到指定屏幕：
 
-如果你希望将特定应用固定到指定屏幕，可以创建配置文件：
-
-配置路径：`~/.config/screenanchor/config.json`
-
-也可以点击菜单栏中的 **"Edit Config..."** 来创建示例配置。
+```bash
+# 点击菜单栏 "Config"，或手动创建：
+~/.config/screenanchor/config.json
+```
 
 ```json
 {
@@ -183,11 +201,7 @@ open ScreenAnchor.app
 }
 ```
 
-#### 查找 Bundle ID
-
-```bash
-osascript -e 'id of app "Google Chrome"'
-```
+查找 Bundle ID：`osascript -e 'id of app "应用名"'`
 
 ### 数据存储
 
@@ -198,9 +212,9 @@ osascript -e 'id of app "Google Chrome"'
 
 | 问题 | 解决方案 |
 |------|----------|
-| 提示需要辅助功能权限 | 系统设置 > 隐私与安全性 > 辅助功能 > 启用 ScreenAnchor |
-| 窗口没有移动 | 确保应用已签名（`bundle.sh` 会自动 ad-hoc 签名） |
-| 首次使用某屏幕组合 | 手动排列窗口，之后会自动保存 |
+| 需要辅助功能权限 | 系统设置 > 隐私与安全性 > 辅助功能 > 添加 ScreenAnchor |
+| 重新构建后权限失效 | 每次构建产生新签名，需在辅助功能设置中重新添加 |
+| Snap Bar 不弹出 | 确认辅助功能权限已授予，重启应用 |
 
 ## License
 
