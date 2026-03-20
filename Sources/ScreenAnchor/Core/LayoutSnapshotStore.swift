@@ -1,4 +1,5 @@
 import Foundation
+import Cocoa
 import CryptoKit
 
 final class LayoutSnapshotStore: ObservableObject {
@@ -65,15 +66,31 @@ final class LayoutSnapshotStore: ObservableObject {
     }
 
     func restoreSnapshot(_ snapshot: LayoutSnapshot, windowManager: WindowManager, excludeBundleIds: Set<String>) {
-        let allWindows = windowManager.getAllWindows()
+        let missed = doRestore(snapshot: snapshot, windowManager: windowManager, excludeBundleIds: excludeBundleIds)
 
-        // Group saved windows by bundleId, preserving order for multi-window apps
+        // Retry missed apps after 2s (Electron apps like Slack sometimes need time)
+        if !missed.isEmpty {
+            Log.snapshot.info("RESTORE: \(missed.count) apps missed, retrying in 2s...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                let stillMissed = self?.doRestore(snapshot: snapshot, windowManager: windowManager, excludeBundleIds: excludeBundleIds) ?? []
+                if !stillMissed.isEmpty {
+                    Log.snapshot.info("RESTORE retry: \(stillMissed.count) apps still inaccessible")
+                }
+            }
+        }
+    }
+
+    /// Returns bundle IDs of apps that were in snapshot but couldn't be found/moved.
+    @discardableResult
+    private func doRestore(snapshot: LayoutSnapshot, windowManager: WindowManager, excludeBundleIds: Set<String>) -> [String] {
+        let allWindows = windowManager.getAllWindows()
+        Log.snapshot.info("RESTORE: snapshot has \(snapshot.windows.count) saved, \(allWindows.count) running")
+
         var savedByBundle: [String: [WindowSnapshot]] = [:]
         for w in snapshot.windows where !excludeBundleIds.contains(w.bundleId) {
             savedByBundle[w.bundleId, default: []].append(w)
         }
 
-        // Group running windows by bundleId
         var runningByBundle: [String: [WindowManager.WindowInfo]] = [:]
         for w in allWindows {
             let bid = w.bundleId ?? ""
@@ -83,17 +100,28 @@ final class LayoutSnapshotStore: ObservableObject {
         }
 
         var restored = 0
-        for (bundleId, savedWindows) in savedByBundle {
-            guard let runningWindows = runningByBundle[bundleId] else { continue }
+        var missed: [String] = []
 
-            // Match windows by index (best effort for multi-window apps)
+        for (bundleId, savedWindows) in savedByBundle {
+            guard let runningWindows = runningByBundle[bundleId] else {
+                // App is in snapshot but AX can't find its windows
+                if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == bundleId }) {
+                    missed.append(bundleId)
+                    Log.snapshot.info("RESTORE: \(savedWindows.first?.appName ?? bundleId) — running but AX returned 0 windows")
+                }
+                continue
+            }
+
             for (i, savedWin) in savedWindows.enumerated() where i < runningWindows.count {
-                windowManager.moveWindow(runningWindows[i].axWindow, toFrame: savedWin.frame.cgRect)
+                let target = savedWin.frame.cgRect
+                Log.snapshot.info("RESTORE: \(savedWin.appName) → (\(Int(target.origin.x)),\(Int(target.origin.y)),\(Int(target.width))x\(Int(target.height)))")
+                windowManager.moveWindow(runningWindows[i].axWindow, toFrame: target)
                 restored += 1
             }
         }
 
-        Log.snapshot.info("Restored \(restored) windows from snapshot '\(snapshot.profileLabel)'")
+        Log.snapshot.info("RESTORE: moved \(restored) windows for '\(snapshot.profileLabel)'")
+        return missed
     }
 
     // MARK: - Private

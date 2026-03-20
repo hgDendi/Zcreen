@@ -81,22 +81,25 @@ final class SnapBarPanel {
         guard pf.contains(pt) else { return nil }
 
         let localX = pt.x - pf.origin.x - Self.panelPadding
-        // NS: y=0 at bottom. Panel bottom = pf.origin.y.
-        // Icon area starts at top of panel, below padding.
         let panelLocalY = pt.y - pf.origin.y  // 0 = panel bottom
 
         for (gi, origin) in groupOrigins.enumerated() {
             let group = state.groups[gi]
-            guard localX >= origin.x && localX < origin.x + origin.iconWidth else { continue }
+            // Expand X hit area by 4pt on each side for easier targeting
+            guard localX >= origin.x - 4 && localX < origin.x + origin.iconWidth + 4 else { continue }
 
-            let cellLocalX = (localX - origin.x) / origin.iconWidth   // 0..1
-            // Icon top in panel-local NS coords:
-            let iconTopY = pf.height - Self.panelPadding
+            let cellLocalX = max(0, min(1, (localX - origin.x) / origin.iconWidth))
+
+            // Accept hits anywhere in the cell height (icon + label area)
+            let cellTopY = pf.height - Self.panelPadding
+            let cellBottomY = Self.panelPadding
+            guard panelLocalY >= cellBottomY && panelLocalY <= cellTopY else { continue }
+
+            // Map Y to icon zone coords (0=top, 1=bottom), clamped
+            let iconTopY = cellTopY
             let iconBottomY = iconTopY - origin.iconHeight
-            guard panelLocalY >= iconBottomY && panelLocalY <= iconTopY else { continue }
-
-            // y within icon: 0 = top, 1 = bottom (visual convention)
-            let cellLocalY = 1.0 - (panelLocalY - iconBottomY) / origin.iconHeight
+            let rawY = 1.0 - (panelLocalY - iconBottomY) / origin.iconHeight
+            let cellLocalY = max(0, min(1, rawY))
 
             for (zi, zone) in group.zones.enumerated() {
                 if zone.hitRect.contains(CGPoint(x: cellLocalX, y: cellLocalY)) {
@@ -179,7 +182,6 @@ struct GroupCellView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            // Interactive icon
             ZStack {
                 ForEach(Array(group.rects.enumerated()), id: \.offset) { ri, rect in
                     RoundedRectangle(cornerRadius: 3)
@@ -206,6 +208,7 @@ struct GroupCellView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(isGroupHighlighted ? .primary : .secondary)
         }
+        .frame(width: group.iconWidth)  // match hit testing layout
         .scaleEffect(isGroupHighlighted ? 1.05 : 1.0)
         .animation(.easeOut(duration: 0.1), value: isGroupHighlighted)
         .animation(.easeOut(duration: 0.1), value: activeZoneIndex)

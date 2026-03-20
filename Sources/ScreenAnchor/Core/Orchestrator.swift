@@ -36,7 +36,7 @@ final class Orchestrator: ObservableObject {
         setupBeginConfigHandler()
         setupScreenChangeHandler()
         setupAppLaunchHandler()
-        setupPeriodicAutoSave()
+        // Snapshots are only saved via Snap Bar (onSnap callback)
     }
 
     // MARK: - Public actions
@@ -93,17 +93,10 @@ final class Orchestrator: ObservableObject {
     // MARK: - Pre-change snapshot (beginConfigurationFlag)
 
     private func setupBeginConfigHandler() {
-        screenDetector.onBeginConfiguration
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] in
-                guard let self, self.autoApplyOnScreenChange, !self.hasSavedPreChangeSnapshot else { return }
-                guard AccessibilityHelper.isTrusted else { return }
-
-                self.hasSavedPreChangeSnapshot = true
-                self.autoSaveCurrentLayout()
-                Log.general.info("Pre-change snapshot saved for '\(self.screenDetector.profileLabel)'")
-            }
-            .store(in: &cancellables)
+        // Disabled: beginConfigurationFlag fires AFTER macOS has already moved windows
+        // to the remaining screens, so the "pre-change" snapshot contains crammed data
+        // and overwrites the good snapshot from Snap Bar / periodic save.
+        // We rely on onSnap + periodic auto-save to keep snapshots up to date.
     }
 
     // MARK: - Post-change restore
@@ -127,43 +120,35 @@ final class Orchestrator: ObservableObject {
         // Reset pre-change flag
         hasSavedPreChangeSnapshot = false
 
-        // Determine which apps have rules (they get priority)
-        let config = configManager.configuration
-        let hasRules = !config.effectiveRules.isEmpty
-        var ruleBundleIds = Set<String>()
-
-        if hasRules {
-            let matches = ruleEngine.matchRules(configuration: config, screenCount: screenDetector.screenCount)
-            ruleBundleIds = Set(matches.map { $0.bundleId })
-
-            // Apply rules first
-            for match in matches {
-                guard let targetScreen = screenDetector.screenInfo(forAlias: match.targetScreenAlias, configuration: config)
-                else { continue }
-
-                let windows = windowManager.getWindows(bundleId: match.bundleId)
-                for win in windows {
-                    if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) { continue }
-                    windowManager.moveWindowToScreen(win.axWindow, currentFrame: win.frame, targetScreen: targetScreen)
+        // Snapshot-first: restore ALL apps from saved positions
+        if let snapshot = snapshotStore.load(profileKey: newProfileKey) {
+            snapshotStore.restoreSnapshot(snapshot, windowManager: windowManager, excludeBundleIds: [])
+            lastAction = "Restored layout for \(newLabel)"
+            Log.snapshot.info("Restored \(snapshot.windows.count) windows for '\(newLabel)'")
+        } else {
+            // No snapshot — fall back to rules if configured
+            let config = configManager.configuration
+            if !config.effectiveRules.isEmpty {
+                let matches = ruleEngine.matchRules(configuration: config, screenCount: screenDetector.screenCount)
+                for match in matches {
+                    guard let targetScreen = screenDetector.screenInfo(forAlias: match.targetScreenAlias, configuration: config)
+                    else { continue }
+                    let windows = windowManager.getWindows(bundleId: match.bundleId)
+                    for win in windows {
+                        if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) { continue }
+                        windowManager.moveWindowToScreen(win.axWindow, currentFrame: win.frame, targetScreen: targetScreen)
+                    }
                 }
             }
-        }
-
-        // Restore snapshot for remaining (non-rule) apps
-        if let snapshot = snapshotStore.load(profileKey: newProfileKey) {
-            snapshotStore.restoreSnapshot(snapshot, windowManager: windowManager, excludeBundleIds: ruleBundleIds)
-            lastAction = "Restored layout for \(newLabel)"
-        } else {
-            lastAction = "New screen combo: \(newLabel) (no saved layout yet)"
-            Log.snapshot.info("No saved snapshot for '\(newLabel)', windows stay as-is")
+            lastAction = "New screen combo: \(newLabel)"
+            Log.snapshot.info("No snapshot for '\(newLabel)', used rules as fallback")
         }
 
         previousProfileKey = newProfileKey
 
-        // Auto-save the new layout after a settle delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            self?.autoSaveCurrentLayout()
-        }
+        // Don't auto-save immediately after restore — the restored layout is from
+        // the snapshot and saving it back would be redundant. Only Snap Bar actions
+        // and the periodic timer (every 2 min) should update snapshots.
     }
 
     // MARK: - App launch rules
@@ -208,18 +193,6 @@ final class Orchestrator: ObservableObject {
             Log.rule.info("Launch rule: \(appName ?? "unknown") -> \(match.targetScreenAlias)")
             self.lastAction = "Moved \(appName ?? "app") to \(match.targetScreenAlias)"
         }
-    }
-
-    // MARK: - Periodic auto-save
-
-    private func setupPeriodicAutoSave() {
-        Timer.publish(every: 120, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                guard let self, AccessibilityHelper.isTrusted else { return }
-                self.autoSaveCurrentLayout()
-            }
-            .store(in: &cancellables)
     }
 
     private func autoSaveCurrentLayout() {

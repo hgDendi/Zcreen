@@ -45,7 +45,10 @@ struct MenuBarView: View {
                 secretTapCount += 1
                 lastSecretTap = now
                 if secretTapCount >= 5 {
-                    orchestrator.configManager.openConfigInEditor()
+                    // Open config directory (snapshots + config.json) in Finder
+                    let configDir = FileManager.default.homeDirectoryForCurrentUser
+                        .appendingPathComponent(".config/screenanchor")
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: configDir.path)
                     secretTapCount = 0
                 }
             }
