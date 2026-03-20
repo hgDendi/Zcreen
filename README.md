@@ -36,7 +36,7 @@ macOS menu bar app for multi-screen window management. Zero configuration — ju
   | ¼ | Top-left / Top-right / Bottom-left / Bottom-right |
 
 - **Portrait-aware**: portrait screens get vertical splits (½ ↕, ⅓ ↕) with matching aspect ratio icons
-- Snapped layouts are automatically saved to the snapshot system
+- All window positions are automatically saved for every app
 
 **Caffeinate**
 - Prevent display & idle sleep from the menu bar
@@ -47,7 +47,6 @@ macOS menu bar app for multi-screen window management. Zero configuration — ju
 - Current screen list with resolution badges
 - Click any screen to jump to Display Settings
 - Toggle auto-restore, snap bar, launch at login
-- Optional JSON config for power-user app-pinning rules
 
 ## Requirements
 
@@ -67,36 +66,6 @@ Download the DMG from [Releases](https://github.com/hgDendi/ScreenAnchor/release
 git clone https://github.com/hgDendi/ScreenAnchor.git && cd ScreenAnchor
 make install
 ```
-
-## Configuration (optional)
-
-ScreenAnchor works with zero config. For power users who want to pin specific apps to screens:
-
-```json
-// ~/.config/screenanchor/config.json
-{
-  "version": 1,
-  "screens": [
-    { "alias": "dell-portrait", "nameContains": "U2723QE" },
-    { "alias": "macbook", "nameContains": "Built-in" }
-  ],
-  "rules": [
-    {
-      "app": { "bundleId": "com.mitchellh.ghostty" },
-      "targetScreen": "dell-portrait"
-    }
-  ]
-}
-```
-
-Find bundle IDs: `osascript -e 'id of app "AppName"'`
-
-## Data
-
-| Path | Content |
-|------|---------|
-| `~/.config/screenanchor/snapshots/` | Layout snapshots (auto-managed) |
-| `~/.config/screenanchor/config.json` | Rules config (optional) |
 
 ## Troubleshooting
 

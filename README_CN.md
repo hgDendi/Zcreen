@@ -36,7 +36,7 @@ macOS 菜单栏应用，多屏窗口管理。零配置即用。
   | ¼ | 左上 / 右上 / 左下 / 右下 |
 
 - **竖屏适配**：竖屏自动切换为纵向分割（½ ↕、⅓ ↕），预览图标匹配屏幕比例
-- 通过 Snap Bar 调整的布局自动保存
+- 所有应用的窗口位置自动保存
 
 **Caffeinate（防息屏）**
 - 在菜单栏中防止显示器和系统休眠
@@ -47,7 +47,6 @@ macOS 菜单栏应用，多屏窗口管理。零配置即用。
 - 显示当前屏幕列表和分辨率
 - 点击屏幕跳转到系统显示器设置
 - 开关：自动恢复、Snap Bar、开机自启
-- 可选 JSON 配置文件（高级用户固定应用到指定屏幕）
 
 ## 系统要求
 
@@ -67,36 +66,6 @@ macOS 菜单栏应用，多屏窗口管理。零配置即用。
 git clone https://github.com/hgDendi/ScreenAnchor.git && cd ScreenAnchor
 make install
 ```
-
-## 配置（可选）
-
-零配置即可使用。如需将特定应用固定到指定屏幕：
-
-```json
-// ~/.config/screenanchor/config.json
-{
-  "version": 1,
-  "screens": [
-    { "alias": "dell-portrait", "nameContains": "U2723QE" },
-    { "alias": "macbook", "nameContains": "Built-in" }
-  ],
-  "rules": [
-    {
-      "app": { "bundleId": "com.mitchellh.ghostty" },
-      "targetScreen": "dell-portrait"
-    }
-  ]
-}
-```
-
-查找 Bundle ID：`osascript -e 'id of app "应用名"'`
-
-## 数据存储
-
-| 路径 | 内容 |
-|------|------|
-| `~/.config/screenanchor/snapshots/` | 布局快照（自动管理）|
-| `~/.config/screenanchor/config.json` | 规则配置（可选）|
 
 ## 常见问题
 

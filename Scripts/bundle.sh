@@ -20,6 +20,11 @@ mkdir -p "${MACOS}" "${RESOURCES}"
 # Copy binary
 cp "${BUILD_DIR}/${APP_NAME}" "${MACOS}/${APP_NAME}"
 
+# Copy icon
+if [ -f "Sources/ScreenAnchor/App/AppIcon.icns" ]; then
+    cp "Sources/ScreenAnchor/App/AppIcon.icns" "${RESOURCES}/AppIcon.icns"
+fi
+
 # Create Info.plist
 cat > "${CONTENTS}/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -40,6 +45,8 @@ cat > "${CONTENTS}/Info.plist" << 'EOF'
     <string>APPL</string>
     <key>CFBundleExecutable</key>
     <string>ScreenAnchor</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
@@ -50,7 +57,7 @@ cat > "${CONTENTS}/Info.plist" << 'EOF'
 </plist>
 EOF
 
-# Ad-hoc sign (needed for stable Accessibility permissions)
+# Ad-hoc sign
 echo "==> Signing..."
 codesign --force --sign - "${APP_BUNDLE}"
 

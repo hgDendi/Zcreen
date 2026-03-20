@@ -8,7 +8,7 @@ let package = Package(
         .executableTarget(
             name: "ScreenAnchor",
             path: "Sources/ScreenAnchor",
-            exclude: ["App/Info.plist"],
+            exclude: ["App/Info.plist", "App/AppIcon.icns"],
             linkerSettings: [
                 .unsafeFlags(["-Xlinker", "-sectcreate",
                               "-Xlinker", "__TEXT",

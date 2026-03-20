@@ -5,6 +5,8 @@ struct MenuBarView: View {
     @State private var launchAtLogin = LoginItemManager.isEnabled
     @State private var hoveredButton: String?
     @State private var accessibilityOK = AccessibilityHelper.isTrusted
+    @State private var secretTapCount = 0
+    @State private var lastSecretTap = Date.distantPast
 
     private var screenDetector: ScreenDetector { orchestrator.screenDetector }
     private var snapshotStore: LayoutSnapshotStore { orchestrator.snapshotStore }
@@ -36,6 +38,16 @@ struct MenuBarView: View {
                 Image(systemName: "rectangle.3.group")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white)
+            }
+            .onTapGesture {
+                let now = Date()
+                if now.timeIntervalSince(lastSecretTap) > 2 { secretTapCount = 0 }
+                secretTapCount += 1
+                lastSecretTap = now
+                if secretTapCount >= 5 {
+                    orchestrator.configManager.openConfigInEditor()
+                    secretTapCount = 0
+                }
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -289,19 +301,6 @@ struct MenuBarView: View {
             sectionDivider
 
             HStack(spacing: 0) {
-                footerButton("Config") {
-                    orchestrator.configManager.openConfigInEditor()
-                }
-
-                if orchestrator.configManager.hasConfigFile {
-                    footerDot
-                    footerButton("Reload") {
-                        orchestrator.configManager.reload()
-                    }
-                }
-
-                footerDot
-
                 footerButton("About") { showAbout() }
 
                 Spacer()
