@@ -10,6 +10,9 @@ CONTENTS="${APP_BUNDLE}/Contents"
 MACOS="${CONTENTS}/MacOS"
 RESOURCES="${CONTENTS}/Resources"
 
+# Optional: signing identity (pass as first argument)
+SIGN_IDENTITY="${1:--}"
+
 echo "==> Building release..."
 swift build -c release
 
@@ -25,41 +28,17 @@ if [ -f "Sources/Zcreen/App/AppIcon.icns" ]; then
     cp "Sources/Zcreen/App/AppIcon.icns" "${RESOURCES}/AppIcon.icns"
 fi
 
-# Create Info.plist
-cat > "${CONTENTS}/Info.plist" << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key>
-    <string>Zcreen</string>
-    <key>CFBundleDisplayName</key>
-    <string>Zcreen</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.zcreen.app</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleExecutable</key>
-    <string>Zcreen</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-</dict>
-</plist>
-EOF
+# Copy Info.plist from source and add icon key
+cp "Sources/Zcreen/App/Info.plist" "${CONTENTS}/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "${CONTENTS}/Info.plist" 2>/dev/null || true
 
-# Ad-hoc sign
-echo "==> Signing..."
-codesign --force --sign - "${APP_BUNDLE}"
+# Sign
+echo "==> Signing with identity: ${SIGN_IDENTITY}"
+if [ "${SIGN_IDENTITY}" = "-" ]; then
+    codesign --force --sign - "${APP_BUNDLE}"
+else
+    codesign --force --options runtime --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}"
+fi
 
 echo "==> Done! App bundle: ${APP_BUNDLE}"
 echo "    Run: open ${APP_BUNDLE}"

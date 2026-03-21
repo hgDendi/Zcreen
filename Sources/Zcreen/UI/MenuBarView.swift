@@ -7,6 +7,7 @@ struct MenuBarView: View {
     @State private var accessibilityOK = AccessibilityHelper.isTrusted
     @State private var secretTapCount = 0
     @State private var lastSecretTap = Date.distantPast
+    @State private var showSavedApps = false
 
     private var screenDetector: ScreenDetector { orchestrator.screenDetector }
     private var snapshotStore: LayoutSnapshotStore { orchestrator.snapshotStore }
@@ -14,6 +15,7 @@ struct MenuBarView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerSection
+            if orchestrator.autoUpdater.updateAvailable { updateBanner }
             if !accessibilityOK { permissionBanner }
             screenListSection
             if !orchestrator.lastAction.isEmpty { statusSection }
@@ -23,49 +25,158 @@ struct MenuBarView: View {
         }
         .frame(width: 300)
         .onAppear { accessibilityOK = AccessibilityHelper.isTrusted }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+            accessibilityOK = AccessibilityHelper.isTrusted
+        }
     }
 
     // MARK: - Header
 
     private var headerSection: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.linearGradient(
-                        colors: [.blue.opacity(0.7), .purple.opacity(0.6)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 32, height: 32)
-                Image(systemName: "rectangle.3.group")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-            }
-            .onTapGesture {
-                let now = Date()
-                if now.timeIntervalSince(lastSecretTap) > 2 { secretTapCount = 0 }
-                secretTapCount += 1
-                lastSecretTap = now
-                if secretTapCount >= 5 {
-                    // Open config directory (snapshots + config.json) in Finder
-                    let configDir = FileManager.default.homeDirectoryForCurrentUser
-                        .appendingPathComponent(".config/zcreen")
-                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: configDir.path)
-                    secretTapCount = 0
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(.linearGradient(
+                            colors: [.blue.opacity(0.7), .purple.opacity(0.6)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: "rectangle.3.group")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
                 }
-            }
+                .onTapGesture {
+                    let now = Date()
+                    if now.timeIntervalSince(lastSecretTap) > 2 { secretTapCount = 0 }
+                    secretTapCount += 1
+                    lastSecretTap = now
+                    if secretTapCount >= 5 {
+                        let configDir = FileManager.default.homeDirectoryForCurrentUser
+                            .appendingPathComponent(".config/zcreen")
+                        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: configDir.path)
+                        secretTapCount = 0
+                    }
+                }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Zcreen")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("\(screenDetector.screenCount) screen\(screenDetector.screenCount == 1 ? "" : "s") \u{00B7} \(snapshotStore.savedProfileCount) layout\(snapshotStore.savedProfileCount == 1 ? "" : "s") saved")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Zcreen")
+                        .font(.system(size: 13, weight: .semibold))
+
+                    let appCount = snapshotStore.savedAppNames(for: screenDetector.profileKey).count
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { showSavedApps.toggle() }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("\(screenDetector.screenCount) screen\(screenDetector.screenCount == 1 ? "" : "s") \u{00B7} \(appCount) app\(appCount == 1 ? "" : "s") saved")
+                            Image(systemName: showSavedApps ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 7, weight: .semibold))
+                        }
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(.quaternary.opacity(0.3))
+
+            if showSavedApps {
+                savedAppsSection
+            }
+        }
+    }
+
+    private var savedAppsSection: some View {
+        let apps = snapshotStore.savedAppNames(for: screenDetector.profileKey)
+        return VStack(alignment: .leading, spacing: 0) {
+            if apps.isEmpty {
+                Text("No saved layout for current screens")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+            } else {
+                Text("Saved apps (\(apps.count)):")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+                    .padding(.bottom, 2)
+
+                ForEach(apps, id: \.self) { name in
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(.green.opacity(0.6))
+                            .frame(width: 5, height: 5)
+                        Text(name)
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 1)
+                }
+                .padding(.bottom, 4)
             }
 
-            Spacer()
+            sectionDivider
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.quaternary.opacity(0.3))
+    }
+
+    // MARK: - Update Banner
+
+    private var updateBanner: some View {
+        let updater = orchestrator.autoUpdater
+        return VStack(spacing: 0) {
+            if updater.isDownloading {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Installing update...")
+                        .font(.system(size: 11))
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.blue)
+
+                    Text("v\(updater.latestVersion) Available")
+                        .font(.system(size: 11, weight: .semibold))
+
+                    Spacer()
+
+                    if updater.downloadURL != nil {
+                        Button { updater.downloadAndInstall() } label: {
+                            Text("Update")
+                                .font(.system(size: 10, weight: .medium))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.blue)
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Button { updater.openReleasePage() } label: {
+                        Image(systemName: "safari")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            }
+
+            sectionDivider
+        }
     }
 
     // MARK: - Permission Banner
@@ -307,6 +418,18 @@ struct MenuBarView: View {
                 footerButton("About") { showAbout() }
 
                 Spacer()
+
+                if orchestrator.autoUpdater.isChecking {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .padding(.horizontal, 4)
+                } else {
+                    footerButton("Check for Updates") {
+                        orchestrator.autoUpdater.checkForUpdates()
+                    }
+                }
+
+                footerDot
 
                 footerButton("Quit", role: .destructive) {
                     NSApplication.shared.terminate(nil)

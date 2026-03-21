@@ -44,6 +44,15 @@ final class LayoutSnapshotStore: ObservableObject {
             .map { (key: $0.profileKey, label: $0.profileLabel, windowCount: $0.windows.count, date: $0.timestamp) }
     }
 
+    func savedAppNames(for profileKey: String) -> [String] {
+        guard let snapshot = cache[profileKey] else { return [] }
+        var seen = Set<String>()
+        return snapshot.windows.compactMap { w in
+            guard !w.appName.isEmpty, seen.insert(w.appName).inserted else { return nil }
+            return w.appName
+        }
+    }
+
     func captureSnapshot(profileKey: String, profileLabel: String, windowManager: WindowManager, screens: [ScreenInfo]) -> LayoutSnapshot {
         let allWindows = windowManager.getAllWindows()
         let windowSnapshots = allWindows.map { win -> WindowSnapshot in

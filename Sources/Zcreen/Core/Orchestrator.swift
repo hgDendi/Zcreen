@@ -13,6 +13,7 @@ final class Orchestrator: ObservableObject {
     let ruleEngine: RuleEngine
     var snapBarController: SnapBarController
     let caffeinateManager: CaffeinateManager
+    let autoUpdater: AutoUpdater
 
     private var cancellables = Set<AnyCancellable>()
     private var previousProfileKey: String = ""
@@ -26,10 +27,22 @@ final class Orchestrator: ObservableObject {
         ruleEngine = RuleEngine()
         snapBarController = SnapBarController(windowManager: windowManager)
         caffeinateManager = CaffeinateManager()
+        autoUpdater = AutoUpdater()
 
         snapBarController.onSnap = { [weak self] in
             self?.autoSaveCurrentLayout()
         }
+
+        // Forward nested ObservableObject changes so SwiftUI updates
+        snapshotStore.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+        screenDetector.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+        autoUpdater.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
 
         previousProfileKey = screenDetector.profileKey
 

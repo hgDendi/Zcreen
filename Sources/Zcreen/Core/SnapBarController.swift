@@ -138,6 +138,7 @@ final class SnapBarController: ObservableObject {
                next != cur {
                 showPanel(on: next)
             }
+
         }
     }
 

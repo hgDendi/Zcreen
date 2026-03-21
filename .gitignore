@@ -6,3 +6,9 @@ DerivedData/
 .swiftpm/
 *.xcodeproj
 ScreenAnchor.app/
+Zcreen.app/
+*.zip
+
+# Local secrets (never commit)
+.env
+.env.local
