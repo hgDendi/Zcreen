@@ -27,7 +27,8 @@ final class SnapBarPanel {
     let state: SnapBarState
 
     static let groupGap: CGFloat = 22
-    static let panelPadding: CGFloat = 22
+    static let panelPadding: CGFloat = 22   // horizontal padding
+    static let verticalPadding: CGFloat = 18 // must match SwiftUI .padding(.vertical, 18)
     static let labelHeight: CGFloat = 18
     static let iconLabelGap: CGFloat = 6
 
@@ -91,8 +92,8 @@ final class SnapBarPanel {
             let cellLocalX = max(0, min(1, (localX - origin.x) / origin.iconWidth))
 
             // Accept hits anywhere in the cell height (icon + label area)
-            let cellTopY = pf.height - Self.panelPadding
-            let cellBottomY = Self.panelPadding
+            let cellTopY = pf.height - Self.verticalPadding
+            let cellBottomY = Self.verticalPadding
             guard panelLocalY >= cellBottomY && panelLocalY <= cellTopY else { continue }
 
             // Map Y to icon zone coords (0=top, 1=bottom), clamped
@@ -143,7 +144,7 @@ final class SnapBarPanel {
         }
 
         let totalWidth = x + panelPadding * 2
-        let totalHeight = maxIconH + labelHeight + iconLabelGap + panelPadding * 2
+        let totalHeight = maxIconH + labelHeight + iconLabelGap + verticalPadding * 2
         return (totalWidth, totalHeight, origins)
     }
 }
@@ -203,10 +204,11 @@ struct GroupCellView: View {
                     .fill(isGroupHighlighted ? Color.blue.opacity(0.06) : Color.clear)
             )
 
-            // Label
+            // Label — fixed height must match SnapBarPanel.labelHeight
             Text(group.label)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(isGroupHighlighted ? .primary : .secondary)
+                .frame(height: SnapBarPanel.labelHeight)
         }
         .frame(width: group.iconWidth)  // match hit testing layout
         .scaleEffect(isGroupHighlighted ? 1.05 : 1.0)
