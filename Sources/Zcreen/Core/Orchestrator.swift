@@ -43,13 +43,15 @@ final class Orchestrator: ObservableObject {
         autoUpdater.objectWillChange.sink { [weak self] in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
+        configManager.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
 
         previousProfileKey = screenDetector.profileKey
 
         setupBeginConfigHandler()
         setupScreenChangeHandler()
         setupAppLaunchHandler()
-        // Snapshots are only saved via Snap Bar (onSnap callback)
     }
 
     // MARK: - Public actions
@@ -130,16 +132,13 @@ final class Orchestrator: ObservableObject {
         let newLabel = screenDetector.profileLabel
         Log.general.info("Screen change: '\(oldProfileKey)' -> '\(newProfileKey)' (\(newLabel))")
 
-        // Reset pre-change flag
         hasSavedPreChangeSnapshot = false
 
-        // Snapshot-first: restore ALL apps from saved positions
         if let snapshot = snapshotStore.load(profileKey: newProfileKey) {
             snapshotStore.restoreSnapshot(snapshot, windowManager: windowManager, excludeBundleIds: [])
             lastAction = "Restored layout for \(newLabel)"
             Log.snapshot.info("Restored \(snapshot.windows.count) windows for '\(newLabel)'")
         } else {
-            // No snapshot — fall back to rules if configured
             let config = configManager.configuration
             if !config.effectiveRules.isEmpty {
                 let matches = ruleEngine.matchRules(configuration: config, screenCount: screenDetector.screenCount)
@@ -158,10 +157,6 @@ final class Orchestrator: ObservableObject {
         }
 
         previousProfileKey = newProfileKey
-
-        // Don't auto-save immediately after restore — the restored layout is from
-        // the snapshot and saving it back would be redundant. Only Snap Bar actions
-        // and the periodic timer (every 2 min) should update snapshots.
     }
 
     // MARK: - App launch rules
@@ -170,7 +165,6 @@ final class Orchestrator: ObservableObject {
         NSWorkspace.shared.notificationCenter
             .publisher(for: NSWorkspace.didLaunchApplicationNotification)
             .compactMap { $0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication }
-            .delay(for: .seconds(1), scheduler: DispatchQueue.main)
             .sink { [weak self] app in
                 guard let self, self.autoApplyOnAppLaunch else { return }
                 self.handleAppLaunch(app)
@@ -196,15 +190,30 @@ final class Orchestrator: ObservableObject {
         guard let targetScreen = screenDetector.screenInfo(forAlias: match.targetScreenAlias, configuration: config)
         else { return }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        // Poll for windows instead of fixed delay — handles both fast and slow apps
+        waitForWindows(bundleId: match.bundleId) { [weak self] windows in
             guard let self else { return }
-            let windows = self.windowManager.getWindows(bundleId: match.bundleId)
             for win in windows {
                 if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) { continue }
                 self.windowManager.moveWindowToScreen(win.axWindow, currentFrame: win.frame, targetScreen: targetScreen)
             }
             Log.rule.info("Launch rule: \(appName ?? "unknown") -> \(match.targetScreenAlias)")
             self.lastAction = "Moved \(appName ?? "app") to \(match.targetScreenAlias)"
+        }
+    }
+
+    /// Poll for windows of an app until they appear, with exponential backoff timeout
+    private func waitForWindows(bundleId: String, attempt: Int = 1,
+                                action: @escaping ([WindowManager.WindowInfo]) -> Void) {
+        let windows = windowManager.getWindows(bundleId: bundleId)
+        if !windows.isEmpty {
+            action(windows)
+        } else if attempt < Constants.Timing.appLaunchPollMaxAttempts {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Constants.Timing.appLaunchPollInterval) { [weak self] in
+                self?.waitForWindows(bundleId: bundleId, attempt: attempt + 1, action: action)
+            }
+        } else {
+            Log.rule.info("Launch rule: gave up waiting for windows of \(bundleId) after \(Constants.Timing.appLaunchPollMaxAttempts) attempts")
         }
     }
 

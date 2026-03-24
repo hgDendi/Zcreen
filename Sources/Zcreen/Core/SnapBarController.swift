@@ -14,6 +14,7 @@ final class SnapBarController: ObservableObject {
     private var targetScreen: NSScreen?
 
     private var pollTimer: Timer?
+    private var isHighFrequency = false
 
     private enum DragState { case idle, tracking, snapping }
     private var dragState: DragState = .idle
@@ -24,25 +25,39 @@ final class SnapBarController: ObservableObject {
 
     init(windowManager: WindowManager) {
         self.windowManager = windowManager
-        startPolling()
+        startPolling(highFrequency: false)
     }
 
     deinit { pollTimer?.invalidate() }
 
-    // MARK: - Polling (20 Hz, .common mode so it fires during window drags)
+    // MARK: - Adaptive Polling (4 Hz idle, 20 Hz during drag)
 
-    private func startPolling() {
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+    private func startPolling(highFrequency: Bool) {
+        pollTimer?.invalidate()
+        isHighFrequency = highFrequency
+        let interval = highFrequency
+            ? Constants.SnapBar.highFrequencyInterval
+            : Constants.SnapBar.lowFrequencyInterval
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             self?.tick()
         }
         RunLoop.main.add(timer, forMode: .common)
         pollTimer = timer
     }
 
+    private func switchToHighFrequency() {
+        guard !isHighFrequency else { return }
+        startPolling(highFrequency: true)
+    }
+
+    private func switchToLowFrequency() {
+        guard isHighFrequency else { return }
+        startPolling(highFrequency: false)
+    }
+
     private func tick() {
         guard isEnabled else { return }
         guard AccessibilityHelper.isTrusted else {
-            // Print once per second so user can check Console
             tickCount += 1
             if tickCount % 20 == 0 {
                 Log.general.warning("Snap Bar: accessibility NOT trusted, tick \(self.tickCount)")
@@ -67,6 +82,7 @@ final class SnapBarController: ObservableObject {
     // MARK: - Mouse Down: check if click is in a window's title bar
 
     private func onMouseDown(_ mouse: NSPoint) {
+        switchToHighFrequency()
         dragState = .tracking
         tickCount = 0
         initialMousePos = mouse
@@ -78,12 +94,14 @@ final class SnapBarController: ObservableObject {
               app.activationPolicy == .regular
         else {
             dragState = .idle
+            switchToLowFrequency()
             return
         }
 
         let appEl = AXUIElementCreateApplication(app.processIdentifier)
         guard let win = focusedWindow(of: appEl) ?? firstWindow(of: appEl) else {
             dragState = .idle
+            switchToLowFrequency()
             return
         }
 
@@ -91,15 +109,12 @@ final class SnapBarController: ObservableObject {
 
         guard let wFrame = windowFrame(win) else { return }
 
-        // Convert NS mouse → CG for comparison with AX window frame
-        let primaryH = NSScreen.screens.first?.frame.height ?? 0
-        let mouseCG = CGPoint(x: mouse.x, y: primaryH - mouse.y)
-
-        // Title bar = top ~50px of the window (in CG coords)
-        let titleBar = CGRect(x: wFrame.origin.x - 5,
-                              y: wFrame.origin.y - 5,
-                              width: wFrame.width + 10,
-                              height: 50)
+        let mouseCG = CoordinateConverter.nsToCG(mouse)
+        let pad = Constants.SnapBar.titleBarPadding
+        let titleBar = CGRect(x: wFrame.origin.x - pad,
+                              y: wFrame.origin.y - pad,
+                              width: wFrame.width + pad * 2,
+                              height: Constants.SnapBar.titleBarHeight)
 
         clickedTitleBar = titleBar.contains(mouseCG)
     }
@@ -114,15 +129,16 @@ final class SnapBarController: ObservableObject {
         case .tracking:
             tickCount += 1
 
-            // Need title bar click + significant mouse movement
             guard clickedTitleBar, let initial = initialMousePos else {
-                if tickCount >= 20 { dragState = .idle }  // timeout ~1s
+                if tickCount >= Constants.SnapBar.trackingTimeoutTicks {
+                    dragState = .idle
+                    switchToLowFrequency()
+                }
                 return
             }
 
             let moved = hypot(mouse.x - initial.x, mouse.y - initial.y)
-            if moved > 12 {
-                // Window is being dragged → show snap bar
+            if moved > Constants.SnapBar.dragThreshold {
                 dragState = .snapping
                 let screen = screenAt(mouse) ?? NSScreen.main!
                 showPanel(on: screen)
@@ -132,7 +148,6 @@ final class SnapBarController: ObservableObject {
         case .snapping:
             updateHighlight(at: mouse)
 
-            // Follow mouse across screens
             if let cur = targetScreen,
                let next = screenAt(mouse),
                next != cur {
@@ -150,6 +165,7 @@ final class SnapBarController: ObservableObject {
             tickCount = 0
             initialMousePos = nil
             clickedTitleBar = false
+            switchToLowFrequency()
         }
 
         guard dragState == .snapping, isShowing, let panel else { return }
@@ -163,7 +179,7 @@ final class SnapBarController: ObservableObject {
     // MARK: - Panel management
 
     private func showPanel(on screen: NSScreen) {
-        panel?.hide()  // hide old panel before creating new one
+        panel?.hide()
         let groups = PresetGroup.groups(for: screen)
         panel = SnapBarPanel(groups: groups)
         panel?.show(on: screen)
@@ -186,23 +202,12 @@ final class SnapBarController: ObservableObject {
     private func applyPreset(_ preset: LayoutPreset) {
         guard let win = targetWindow, let screen = targetScreen else { return }
 
-        // Convert NS visibleFrame (bottom-left origin) → CG coordinates (top-left origin)
-        // AXUIElement uses CG coordinates
-        let nsFrame = screen.visibleFrame
-        let primaryH = NSScreen.screens.first?.frame.height ?? 0
-        let cgVisible = CGRect(
-            x: nsFrame.origin.x,
-            y: primaryH - nsFrame.origin.y - nsFrame.height,
-            width: nsFrame.width,
-            height: nsFrame.height
-        )
-
+        let cgVisible = CoordinateConverter.nsToCG(screen.visibleFrame)
         let frame = preset.frame(for: cgVisible)
         windowManager.moveWindow(win, toFrame: frame)
         Log.general.info("Snapped '\(preset.id)' on \(screen.localizedName)")
 
-        // Persist layout after a short delay (let the window settle)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + Constants.SnapBar.snapSaveDelay) { [weak self] in
             self?.onSnap?()
         }
     }

@@ -15,6 +15,11 @@ let package = Package(
                               "-Xlinker", "__info_plist",
                               "-Xlinker", "Sources/Zcreen/App/Info.plist"])
             ]
+        ),
+        .testTarget(
+            name: "ZcreenTests",
+            dependencies: ["Zcreen"],
+            path: "Tests/ZcreenTests"
         )
     ]
 )

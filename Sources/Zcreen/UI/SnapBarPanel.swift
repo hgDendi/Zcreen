@@ -26,11 +26,11 @@ final class SnapBarPanel {
     let panel: NSPanel
     let state: SnapBarState
 
-    static let groupGap: CGFloat = 22
-    static let panelPadding: CGFloat = 22   // horizontal padding
-    static let verticalPadding: CGFloat = 18 // must match SwiftUI .padding(.vertical, 18)
-    static let labelHeight: CGFloat = 18
-    static let iconLabelGap: CGFloat = 6
+    static var groupGap: CGFloat { Constants.Panel.groupGap }
+    static var panelPadding: CGFloat { Constants.Panel.horizontalPadding }
+    static var verticalPadding: CGFloat { Constants.Panel.verticalPadding }
+    static var labelHeight: CGFloat { Constants.Panel.labelHeight }
+    static var iconLabelGap: CGFloat { Constants.Panel.iconLabelGap }
 
     private var groupOrigins: [(x: CGFloat, iconWidth: CGFloat, iconHeight: CGFloat)] = []
 

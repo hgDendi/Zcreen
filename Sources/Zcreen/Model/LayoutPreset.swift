@@ -9,9 +9,6 @@ struct LayoutPreset: Equatable {
     let relW: CGFloat
     let relH: CGFloat
 
-    /// Gap in points between adjacent split windows
-    private static let gap: CGFloat = 6
-
     func frame(for visibleFrame: CGRect) -> CGRect {
         var f = CGRect(
             x: visibleFrame.origin.x + relX * visibleFrame.width,
@@ -19,7 +16,7 @@ struct LayoutPreset: Equatable {
             width: relW * visibleFrame.width,
             height: relH * visibleFrame.height
         )
-        let g = Self.gap / 2
+        let g = Constants.Layout.windowGap / 2
         // Add gap on inner edges only (not on screen edges)
         if relX > 0.01 { f.origin.x += g; f.size.width -= g }
         if relX + relW < 0.99 { f.size.width -= g }

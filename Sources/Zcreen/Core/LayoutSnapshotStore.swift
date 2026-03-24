@@ -77,14 +77,32 @@ final class LayoutSnapshotStore: ObservableObject {
     func restoreSnapshot(_ snapshot: LayoutSnapshot, windowManager: WindowManager, excludeBundleIds: Set<String>) {
         let missed = doRestore(snapshot: snapshot, windowManager: windowManager, excludeBundleIds: excludeBundleIds)
 
-        // Retry missed apps after 2s (Electron apps like Slack sometimes need time)
         if !missed.isEmpty {
-            Log.snapshot.info("RESTORE: \(missed.count) apps missed, retrying in 2s...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                let stillMissed = self?.doRestore(snapshot: snapshot, windowManager: windowManager, excludeBundleIds: excludeBundleIds) ?? []
-                if !stillMissed.isEmpty {
-                    Log.snapshot.info("RESTORE retry: \(stillMissed.count) apps still inaccessible")
-                }
+            scheduleRetry(snapshot: snapshot, windowManager: windowManager,
+                          excludeBundleIds: excludeBundleIds, missed: missed, attempt: 1)
+        }
+    }
+
+    // MARK: - Exponential backoff retry
+
+    private func scheduleRetry(snapshot: LayoutSnapshot, windowManager: WindowManager,
+                               excludeBundleIds: Set<String>, missed: [String], attempt: Int) {
+        let maxRetries = Constants.Timing.snapshotMaxRetries
+        guard attempt <= maxRetries else {
+            Log.snapshot.info("RESTORE: gave up after \(maxRetries) retries, \(missed.count) apps still inaccessible")
+            return
+        }
+
+        // Exponential backoff: 1s → 2s → 4s
+        let delay = Constants.Timing.snapshotRetryBaseDelay * pow(2.0, Double(attempt - 1))
+        Log.snapshot.info("RESTORE: \(missed.count) apps missed, retry \(attempt)/\(maxRetries) in \(delay)s...")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            let stillMissed = self?.doRestore(snapshot: snapshot, windowManager: windowManager,
+                                             excludeBundleIds: excludeBundleIds) ?? []
+            if !stillMissed.isEmpty {
+                self?.scheduleRetry(snapshot: snapshot, windowManager: windowManager,
+                                    excludeBundleIds: excludeBundleIds, missed: stillMissed, attempt: attempt + 1)
             }
         }
     }
@@ -113,7 +131,6 @@ final class LayoutSnapshotStore: ObservableObject {
 
         for (bundleId, savedWindows) in savedByBundle {
             guard let runningWindows = runningByBundle[bundleId] else {
-                // App is in snapshot but AX can't find its windows
                 if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == bundleId }) {
                     missed.append(bundleId)
                     Log.snapshot.info("RESTORE: \(savedWindows.first?.appName ?? bundleId) — running but AX returned 0 windows")

@@ -17,7 +17,7 @@ final class ScreenDetector: ObservableObject {
     /// Fires after screen changes settle (debounced). Emits the new profileKey.
     var onScreensChanged: AnyPublisher<String, Never> {
         screenChangeSubject
-            .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
+            .debounce(for: .milliseconds(Constants.Timing.screenChangeDebounceMs), scheduler: DispatchQueue.main)
             .map { [weak self] in
                 self?.refreshScreens()
                 return self?.profileKey ?? ""
