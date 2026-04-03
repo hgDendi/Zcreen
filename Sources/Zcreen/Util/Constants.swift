@@ -40,6 +40,10 @@ enum Constants {
     enum Timing {
         /// 屏幕变化 debounce (ms)
         static let screenChangeDebounceMs: Int = 500
+        /// 定时自动保存布局间隔 (s)
+        static let layoutAutoSaveInterval: TimeInterval = 15
+        /// 屏幕变化后延迟保存当前布局 (s)
+        static let screenChangeAutoSaveDelay: TimeInterval = 2.0
         /// 配置文件变化重载延迟 (s)
         static let configReloadDelay: TimeInterval = 0.2
         /// 快照恢复重试基础延迟 (s)
@@ -50,5 +54,14 @@ enum Constants {
         static let appLaunchPollInterval: TimeInterval = 0.5
         /// App 启动后轮询窗口最大次数
         static let appLaunchPollMaxAttempts: Int = 10
+        /// App 启动规则执行后延迟保存布局 (s)
+        static let appLaunchAutoSaveDelay: TimeInterval = 2.0
+    }
+
+    enum WindowFilter {
+        /// 默认窗口最小宽度 (pt)
+        static let minimumWidth: CGFloat = 50
+        /// 默认窗口最小高度 (pt)
+        static let minimumHeight: CGFloat = 50
     }
 }

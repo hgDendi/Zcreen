@@ -1,13 +1,21 @@
 import Cocoa
 import ApplicationServices
 
-final class WindowManager {
+class WindowManager {
+    private let screenFramesProvider: () -> [CGRect]
+
+    init(screenFramesProvider: @escaping () -> [CGRect] = { NSScreen.screens.map(\.frame) }) {
+        self.screenFramesProvider = screenFramesProvider
+    }
 
     struct WindowInfo {
         let pid: pid_t
         let bundleId: String?
         let appName: String
         let title: String?
+        let role: String?
+        let subrole: String?
+        let isMinimized: Bool
         let frame: CGRect
         let axWindow: AXUIElement
     }
@@ -33,15 +41,18 @@ final class WindowManager {
 
             for window in windows {
                 guard let frame = getWindowFrame(window) else { continue }
-                // Skip tiny windows (likely utility windows)
-                if frame.width < 50 || frame.height < 50 { continue }
-
                 let title = getWindowTitle(window)
+                let role = getStringAttribute(window, attribute: kAXRoleAttribute as CFString)
+                let subrole = getStringAttribute(window, attribute: kAXSubroleAttribute as CFString)
+                let isMinimized = getBoolAttribute(window, attribute: kAXMinimizedAttribute as CFString) ?? false
                 result.append(WindowInfo(
                     pid: pid,
                     bundleId: bundleId,
                     appName: appName,
                     title: title,
+                    role: role,
+                    subrole: subrole,
+                    isMinimized: isMinimized,
                     frame: frame,
                     axWindow: window
                 ))
@@ -69,10 +80,30 @@ final class WindowManager {
 
         return windows.compactMap { window in
             guard let frame = getWindowFrame(window) else { return nil }
-            if frame.width < 50 || frame.height < 50 { return nil }
             let title = getWindowTitle(window)
-            return WindowInfo(pid: pid, bundleId: bundleId, appName: appName, title: title, frame: frame, axWindow: window)
+            let role = getStringAttribute(window, attribute: kAXRoleAttribute as CFString)
+            let subrole = getStringAttribute(window, attribute: kAXSubroleAttribute as CFString)
+            let isMinimized = getBoolAttribute(window, attribute: kAXMinimizedAttribute as CFString) ?? false
+            return WindowInfo(
+                pid: pid,
+                bundleId: bundleId,
+                appName: appName,
+                title: title,
+                role: role,
+                subrole: subrole,
+                isMinimized: isMinimized,
+                frame: frame,
+                axWindow: window
+            )
         }
+    }
+
+    func getAllWindows(filter: WindowFilter) -> [WindowInfo] {
+        getAllWindows().filter(filter.allows(window:))
+    }
+
+    func getWindows(bundleId: String, filter: WindowFilter) -> [WindowInfo] {
+        getWindows(bundleId: bundleId).filter(filter.allows(window:))
     }
 
     func moveWindow(_ window: AXUIElement, to point: CGPoint) {
@@ -93,17 +124,19 @@ final class WindowManager {
     }
 
     func moveWindowToScreen(_ window: AXUIElement, currentFrame: CGRect, targetScreen: ScreenInfo) {
-        // Calculate relative position within the current screen, then map to target screen
-        let targetFrame = targetScreen.frame
+        let screenFrames = screenFramesProvider()
+        guard let mainScreenFrame = CoordinateConverter.mainScreenFrame(from: screenFrames),
+              let targetFrame = CoordinateConverter.accessibilityScreenFrame(for: targetScreen.frame, screenFrames: screenFrames)
+        else {
+            moveWindow(window, toFrame: currentFrame)
+            return
+        }
 
-        // Find which screen the window is currently on
-        let currentScreens = NSScreen.screens
-        let currentScreen = currentScreens.first { screen in
-            let screenFrame = screen.frame
-            return screenFrame.contains(CGPoint(x: currentFrame.midX, y: currentFrame.midY))
-        } ?? currentScreens.first!
-
-        let sourceFrame = currentScreen.frame
+        let currentCenter = CGPoint(x: currentFrame.midX, y: currentFrame.midY)
+        let sourceFrame = screenFrames.compactMap { screenFrame -> CGRect? in
+            let accessibilityFrame = CoordinateConverter.nsToAccessibility(screenFrame, mainScreenFrame: mainScreenFrame)
+            return accessibilityFrame.contains(currentCenter) ? accessibilityFrame : nil
+        }.first ?? CoordinateConverter.nsToAccessibility(mainScreenFrame, mainScreenFrame: mainScreenFrame)
 
         // Calculate relative position (0..1)
         let relX = (currentFrame.origin.x - sourceFrame.origin.x) / sourceFrame.width
@@ -141,10 +174,22 @@ final class WindowManager {
     }
 
     private func getWindowTitle(_ window: AXUIElement) -> String? {
+        getStringAttribute(window, attribute: kAXTitleAttribute as CFString)
+    }
+
+    private func getStringAttribute(_ window: AXUIElement, attribute: CFString) -> String? {
         var titleRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef) == .success else {
+        guard AXUIElementCopyAttributeValue(window, attribute, &titleRef) == .success else {
             return nil
         }
         return titleRef as? String
+    }
+
+    private func getBoolAttribute(_ window: AXUIElement, attribute: CFString) -> Bool? {
+        var valueRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, attribute, &valueRef) == .success else {
+            return nil
+        }
+        return valueRef as? Bool
     }
 }

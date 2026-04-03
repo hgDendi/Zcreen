@@ -13,12 +13,14 @@ final class AutoUpdater: ObservableObject {
     private let currentVersion: String
     private static let repoAPI = "https://api.github.com/repos/hgDendi/Zcreen/releases/latest"
 
-    init() {
+    init(autoCheckOnLaunch: Bool = true) {
         currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
 
         // Auto-check on launch (delayed)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
-            self?.checkIfNeeded()
+        if autoCheckOnLaunch {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+                self?.checkIfNeeded()
+            }
         }
     }
 

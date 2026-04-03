@@ -15,17 +15,17 @@ final class ConfigurationTests: XCTestCase {
             Rule(app: AppMatcher(bundleId: "com.test", nameContains: nil),
                  targetScreen: "main", profileOverrides: nil)
         ]
-        let config = Configuration(version: 1, debounceMs: nil, screens: nil, rules: rules, profiles: nil)
+        let config = Configuration(version: 1, debounceMs: nil, screens: nil, rules: rules, profiles: nil, windowFilter: nil)
         XCTAssertEqual(config.effectiveRules.count, 1)
     }
 
     func testDebounceDefaultsTo500() {
-        let config = Configuration(version: 1, debounceMs: nil, screens: nil, rules: nil, profiles: nil)
+        let config = Configuration(version: 1, debounceMs: nil, screens: nil, rules: nil, profiles: nil, windowFilter: nil)
         XCTAssertEqual(config.debounceMilliseconds, 500)
     }
 
     func testDebounceCustomValue() {
-        let config = Configuration(version: 1, debounceMs: 1000, screens: nil, rules: nil, profiles: nil)
+        let config = Configuration(version: 1, debounceMs: 1000, screens: nil, rules: nil, profiles: nil, windowFilter: nil)
         XCTAssertEqual(config.debounceMilliseconds, 1000)
     }
 
@@ -34,7 +34,7 @@ final class ConfigurationTests: XCTestCase {
             ScreenAlias(alias: "macbook", nameContains: "Built-in"),
             ScreenAlias(alias: "dell", nameContains: "U2723QE"),
         ]
-        let config = Configuration(version: 1, debounceMs: nil, screens: screens, rules: nil, profiles: nil)
+        let config = Configuration(version: 1, debounceMs: nil, screens: screens, rules: nil, profiles: nil, windowFilter: nil)
 
         XCTAssertEqual(config.screenAlias(for: "Built-in Retina Display"), "macbook")
         XCTAssertEqual(config.screenAlias(for: "DELL U2723QE"), "dell")
@@ -46,7 +46,7 @@ final class ConfigurationTests: XCTestCase {
             "2-screen": ProfileDef(screenCount: 2),
             "3-screen": ProfileDef(screenCount: 3),
         ]
-        let config = Configuration(version: 1, debounceMs: nil, screens: nil, rules: nil, profiles: profiles)
+        let config = Configuration(version: 1, debounceMs: nil, screens: nil, rules: nil, profiles: profiles, windowFilter: nil)
 
         XCTAssertEqual(config.profileName(for: 2), "2-screen")
         XCTAssertEqual(config.profileName(for: 3), "3-screen")
@@ -84,5 +84,28 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(config.screens?.count, 1)
         XCTAssertEqual(config.effectiveRules.count, 1)
         XCTAssertEqual(config.effectiveRules.first?.app.bundleId, "com.apple.Safari")
+    }
+
+    func testConfigDecodesWindowFilter() throws {
+        let json = """
+        {
+            "version": 1,
+            "windowFilter": {
+                "excludedApps": [{"bundleId": "com.apple.finder"}],
+                "excludedSubroles": ["AXFloatingWindow"],
+                "minWidth": 80,
+                "minHeight": 60,
+                "excludeMinimized": true
+            }
+        }
+        """
+
+        let config = try JSONDecoder().decode(Configuration.self, from: Data(json.utf8))
+
+        XCTAssertEqual(config.windowFilter?.excludedApps?.count, 1)
+        XCTAssertEqual(config.windowFilter?.excludedSubroles, ["AXFloatingWindow"])
+        XCTAssertEqual(config.windowFilter?.minWidth, 80)
+        XCTAssertEqual(config.windowFilter?.minHeight, 60)
+        XCTAssertEqual(config.windowFilter?.excludeMinimized, true)
     }
 }

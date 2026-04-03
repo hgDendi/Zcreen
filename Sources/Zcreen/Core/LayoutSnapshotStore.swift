@@ -2,18 +2,20 @@ import Foundation
 import Cocoa
 import CryptoKit
 
-final class LayoutSnapshotStore: ObservableObject {
+class LayoutSnapshotStore: ObservableObject {
     @Published private(set) var savedProfileCount: Int = 0
 
     private let snapshotDir: URL
     private var cache: [String: LayoutSnapshot] = [:]
 
-    init() {
-        let configDir = FileManager.default.homeDirectoryForCurrentUser
+    init(snapshotDirectory: URL? = nil, loadExisting: Bool = true) {
+        let configDir = snapshotDirectory ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/zcreen/snapshots")
         self.snapshotDir = configDir
         try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
-        loadAll()
+        if loadExisting {
+            loadAll()
+        }
     }
 
     func save(snapshot: LayoutSnapshot) {
@@ -53,8 +55,9 @@ final class LayoutSnapshotStore: ObservableObject {
         }
     }
 
-    func captureSnapshot(profileKey: String, profileLabel: String, windowManager: WindowManager, screens: [ScreenInfo]) -> LayoutSnapshot {
-        let allWindows = windowManager.getAllWindows()
+    func captureSnapshot(profileKey: String, profileLabel: String, windowManager: WindowManager,
+                         screens: [ScreenInfo], windowFilter: WindowFilter) -> LayoutSnapshot {
+        let allWindows = windowManager.getAllWindows(filter: windowFilter)
         let windowSnapshots = allWindows.map { win -> WindowSnapshot in
             let screen = findScreen(for: win.frame, in: screens)
             return WindowSnapshot(
@@ -62,9 +65,19 @@ final class LayoutSnapshotStore: ObservableObject {
                 appName: win.appName,
                 windowTitle: win.title,
                 frame: WindowSnapshot.CodableRect(win.frame),
-                screenName: screen?.name ?? "Unknown"
+                screenName: screen?.name ?? "Unknown",
+                screenKey: screen?.uniqueKey,
+                relativeFrame: screen.flatMap { screen in
+                    guard let screenFrame = CoordinateConverter.accessibilityScreenFrame(for: screen, screens: screens) else {
+                        return nil
+                    }
+                    return WindowSnapshot.CodableRect.relative(from: win.frame, in: screenFrame)
+                },
+                windowRole: win.role,
+                windowSubrole: win.subrole
             )
         }
+        .sorted(by: compareWindowSnapshots)
 
         return LayoutSnapshot(
             profileKey: profileKey,
@@ -74,19 +87,23 @@ final class LayoutSnapshotStore: ObservableObject {
         )
     }
 
-    func restoreSnapshot(_ snapshot: LayoutSnapshot, windowManager: WindowManager, excludeBundleIds: Set<String>) {
-        let missed = doRestore(snapshot: snapshot, windowManager: windowManager, excludeBundleIds: excludeBundleIds)
+    func restoreSnapshot(_ snapshot: LayoutSnapshot, windowManager: WindowManager, excludeBundleIds: Set<String>,
+                         windowFilter: WindowFilter) {
+        let missed = doRestore(snapshot: snapshot, windowManager: windowManager,
+                               excludeBundleIds: excludeBundleIds, windowFilter: windowFilter)
 
         if !missed.isEmpty {
             scheduleRetry(snapshot: snapshot, windowManager: windowManager,
-                          excludeBundleIds: excludeBundleIds, missed: missed, attempt: 1)
+                          excludeBundleIds: excludeBundleIds, windowFilter: windowFilter,
+                          missed: missed, attempt: 1)
         }
     }
 
     // MARK: - Exponential backoff retry
 
     private func scheduleRetry(snapshot: LayoutSnapshot, windowManager: WindowManager,
-                               excludeBundleIds: Set<String>, missed: [String], attempt: Int) {
+                               excludeBundleIds: Set<String>, windowFilter: WindowFilter,
+                               missed: [String], attempt: Int) {
         let maxRetries = Constants.Timing.snapshotMaxRetries
         guard attempt <= maxRetries else {
             Log.snapshot.info("RESTORE: gave up after \(maxRetries) retries, \(missed.count) apps still inaccessible")
@@ -99,22 +116,27 @@ final class LayoutSnapshotStore: ObservableObject {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             let stillMissed = self?.doRestore(snapshot: snapshot, windowManager: windowManager,
-                                             excludeBundleIds: excludeBundleIds) ?? []
+                                             excludeBundleIds: excludeBundleIds,
+                                             windowFilter: windowFilter) ?? []
             if !stillMissed.isEmpty {
                 self?.scheduleRetry(snapshot: snapshot, windowManager: windowManager,
-                                    excludeBundleIds: excludeBundleIds, missed: stillMissed, attempt: attempt + 1)
+                                    excludeBundleIds: excludeBundleIds,
+                                    windowFilter: windowFilter,
+                                    missed: stillMissed, attempt: attempt + 1)
             }
         }
     }
 
     /// Returns bundle IDs of apps that were in snapshot but couldn't be found/moved.
     @discardableResult
-    private func doRestore(snapshot: LayoutSnapshot, windowManager: WindowManager, excludeBundleIds: Set<String>) -> [String] {
-        let allWindows = windowManager.getAllWindows()
+    private func doRestore(snapshot: LayoutSnapshot, windowManager: WindowManager,
+                           excludeBundleIds: Set<String>, windowFilter: WindowFilter) -> [String] {
+        let allWindows = windowManager.getAllWindows(filter: windowFilter)
+        let currentScreens = detectCurrentScreens()
         Log.snapshot.info("RESTORE: snapshot has \(snapshot.windows.count) saved, \(allWindows.count) running")
 
         var savedByBundle: [String: [WindowSnapshot]] = [:]
-        for w in snapshot.windows where !excludeBundleIds.contains(w.bundleId) {
+        for w in snapshot.windows where !excludeBundleIds.contains(w.bundleId) && windowFilter.allows(snapshot: w) {
             savedByBundle[w.bundleId, default: []].append(w)
         }
 
@@ -138,11 +160,36 @@ final class LayoutSnapshotStore: ObservableObject {
                 continue
             }
 
-            for (i, savedWin) in savedWindows.enumerated() where i < runningWindows.count {
-                let target = savedWin.frame.cgRect
-                Log.snapshot.info("RESTORE: \(savedWin.appName) → (\(Int(target.origin.x)),\(Int(target.origin.y)),\(Int(target.width))x\(Int(target.height)))")
-                windowManager.moveWindow(runningWindows[i].axWindow, toFrame: target)
+            let candidates = runningWindows.map { running in
+                WindowMatchCandidate(
+                    title: running.title,
+                    frame: running.frame,
+                    screenName: currentScreenName(for: running.frame),
+                    role: running.role,
+                    subrole: running.subrole
+                )
+            }
+            let assignments = WindowMatcher
+                .match(saved: savedWindows, running: candidates)
+                .sorted { $0.savedIndex < $1.savedIndex }
+
+            for assignment in assignments {
+                let savedWin = savedWindows[assignment.savedIndex]
+                let runningWin = runningWindows[assignment.runningIndex]
+                let target = savedWin.resolvedFrame(using: currentScreens)
+                let confidence = assignment.isLowConfidence ? "low-confidence" : "matched"
+                let titleLabel = savedWin.windowTitle?.isEmpty == false
+                    ? savedWin.windowTitle!
+                    : savedWin.appName
+
+                Log.snapshot.info("RESTORE: \(confidence) '\(titleLabel)' [score=\(assignment.score)] → (\(Int(target.origin.x)),\(Int(target.origin.y)),\(Int(target.width))x\(Int(target.height)))")
+                windowManager.moveWindow(runningWin.axWindow, toFrame: target)
                 restored += 1
+            }
+
+            if assignments.count < savedWindows.count {
+                let unmatchedCount = savedWindows.count - assignments.count
+                Log.snapshot.info("RESTORE: \(savedWindows.first?.appName ?? bundleId) has \(unmatchedCount) saved windows without running match")
             }
         }
 
@@ -177,6 +224,52 @@ final class LayoutSnapshotStore: ObservableObject {
 
     private func findScreen(for windowFrame: CGRect, in screens: [ScreenInfo]) -> ScreenInfo? {
         let center = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
-        return screens.first { $0.frame.contains(center) }
+        return CoordinateConverter.screenContainingAccessibilityPoint(center, in: screens)
+    }
+
+    private func currentScreenName(for frame: CGRect) -> String {
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        let screenFrames = NSScreen.screens.map(\.frame)
+        return NSScreen.screens.first { screen in
+            guard let screenFrame = CoordinateConverter.accessibilityScreenFrame(for: screen.frame, screenFrames: screenFrames) else {
+                return false
+            }
+            return screenFrame.contains(center)
+        }?.localizedName ?? "Unknown"
+    }
+
+    private func detectCurrentScreens() -> [ScreenInfo] {
+        NSScreen.screens.compactMap { screen in
+            let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
+            return ScreenInfo(
+                displayID: displayID,
+                name: screen.localizedName,
+                frame: screen.frame,
+                isBuiltIn: CGDisplayIsBuiltin(displayID) != 0,
+                position: .single,
+                vendorID: CGDisplayVendorNumber(displayID),
+                modelID: CGDisplayModelNumber(displayID),
+                serialNumber: CGDisplaySerialNumber(displayID)
+            )
+        }
+    }
+
+    private func compareWindowSnapshots(_ lhs: WindowSnapshot, _ rhs: WindowSnapshot) -> Bool {
+        if lhs.bundleId != rhs.bundleId { return lhs.bundleId < rhs.bundleId }
+        if lhs.appName != rhs.appName { return lhs.appName < rhs.appName }
+        let lhsTitle = lhs.windowTitle ?? ""
+        let rhsTitle = rhs.windowTitle ?? ""
+        if lhsTitle != rhsTitle { return lhsTitle < rhsTitle }
+        let lhsRole = lhs.windowRole ?? ""
+        let rhsRole = rhs.windowRole ?? ""
+        if lhsRole != rhsRole { return lhsRole < rhsRole }
+        let lhsSubrole = lhs.windowSubrole ?? ""
+        let rhsSubrole = rhs.windowSubrole ?? ""
+        if lhsSubrole != rhsSubrole { return lhsSubrole < rhsSubrole }
+        if lhs.screenName != rhs.screenName { return lhs.screenName < rhs.screenName }
+        if lhs.frame.x != rhs.frame.x { return lhs.frame.x < rhs.frame.x }
+        if lhs.frame.y != rhs.frame.y { return lhs.frame.y < rhs.frame.y }
+        if lhs.frame.width != rhs.frame.width { return lhs.frame.width < rhs.frame.width }
+        return lhs.frame.height < rhs.frame.height
     }
 }
