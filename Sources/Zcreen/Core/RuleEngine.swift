@@ -4,20 +4,16 @@ final class RuleEngine {
 
     struct RuleMatch {
         let rule: Rule
-        let bundleId: String
+        let matchedBundleId: String?
         let targetScreenAlias: String
     }
 
     func matchRules(configuration: Configuration, screenCount: Int) -> [RuleMatch] {
         let profileName = configuration.profileName(for: screenCount)
 
-        return configuration.effectiveRules.compactMap { rule in
+        return configuration.effectiveRules.map { rule in
             let targetAlias = rule.resolvedTargetScreen(for: profileName)
-
-            // Only include if we have a bundleId to match
-            guard let bundleId = rule.app.bundleId else { return nil }
-
-            return RuleMatch(rule: rule, bundleId: bundleId, targetScreenAlias: targetAlias)
+            return RuleMatch(rule: rule, matchedBundleId: rule.app.bundleId, targetScreenAlias: targetAlias)
         }
     }
 
@@ -27,7 +23,8 @@ final class RuleEngine {
         for rule in configuration.effectiveRules {
             if rule.app.matches(bundleId: bundleId, appName: appName) {
                 let targetAlias = rule.resolvedTargetScreen(for: profileName)
-                return RuleMatch(rule: rule, bundleId: bundleId ?? "", targetScreenAlias: targetAlias)
+                guard let resolvedBundleId = bundleId ?? rule.app.bundleId else { return nil }
+                return RuleMatch(rule: rule, matchedBundleId: resolvedBundleId, targetScreenAlias: targetAlias)
             }
         }
         return nil

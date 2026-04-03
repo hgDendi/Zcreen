@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SettingsSection: View {
-    @ObservedObject var orchestrator: Orchestrator
+    @ObservedObject var menuState: MenuState
     @Binding var launchAtLogin: Bool
 
     var body: some View {
@@ -12,12 +12,17 @@ struct SettingsSection: View {
                 settingRow(
                     icon: "arrow.triangle.2.circlepath",
                     title: "Auto-restore on screen change",
-                    isOn: $orchestrator.autoApplyOnScreenChange
+                    isOn: $menuState.autoApplyOnScreenChange
+                )
+                settingRow(
+                    icon: "app.badge",
+                    title: "Auto-apply on app launch",
+                    isOn: $menuState.autoApplyOnAppLaunch
                 )
                 settingRow(
                     icon: "rectangle.topthird.inset.filled",
                     title: "Snap Bar",
-                    isOn: $orchestrator.snapBarController.isEnabled
+                    isOn: $menuState.snapBarEnabled
                 )
                 settingRow(
                     icon: "power",

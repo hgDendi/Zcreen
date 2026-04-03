@@ -8,6 +8,9 @@ DerivedData/
 ScreenAnchor.app/
 Zcreen.app/
 *.zip
+*.dmg
+dist/
+/scripts_local/
 
 # Local secrets (never commit)
 .env

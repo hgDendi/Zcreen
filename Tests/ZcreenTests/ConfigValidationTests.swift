@@ -72,4 +72,21 @@ final class ConfigValidationTests: XCTestCase {
         XCTAssertEqual(rule?.resolvedTargetScreen(for: "2-screen"), "ext")
         XCTAssertEqual(rule?.resolvedTargetScreen(for: nil), "main")
     }
+
+    func testWindowFilterDecodesExcludedApps() throws {
+        let json = """
+        {
+            "version": 1,
+            "windowFilter": {
+                "excludedApps": [{"nameContains": "Finder"}],
+                "excludedSubroles": ["AXFloatingWindow"]
+            }
+        }
+        """
+
+        let config = try JSONDecoder().decode(Configuration.self, from: Data(json.utf8))
+
+        XCTAssertEqual(config.windowFilter?.excludedApps?.first?.nameContains, "Finder")
+        XCTAssertEqual(config.windowFilter?.excludedSubroles, ["AXFloatingWindow"])
+    }
 }

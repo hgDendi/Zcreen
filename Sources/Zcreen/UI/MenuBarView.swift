@@ -15,12 +15,10 @@ struct MenuBarView: View {
                 UpdateBanner(updater: orchestrator.autoUpdater)
             }
 
-            if let error = orchestrator.configManager.configError {
-                ConfigErrorBanner(error: error)
-            }
-
-            if !accessibilityOK {
-                PermissionBanner(accessibilityOK: $accessibilityOK)
+            if let issue = orchestrator.configManager.configIssue {
+                ConfigErrorBanner(issue: issue) {
+                    orchestrator.configManager.openConfigInEditor()
+                }
             }
 
             ScreenListSection(screens: orchestrator.screenDetector.screens, hoveredButton: $hoveredButton)
@@ -29,7 +27,7 @@ struct MenuBarView: View {
                 statusSection
             }
 
-            SettingsSection(orchestrator: orchestrator, launchAtLogin: $launchAtLogin)
+            SettingsSection(menuState: orchestrator.menuState, launchAtLogin: $launchAtLogin)
             CaffeinateSection(manager: orchestrator.caffeinateManager, hoveredButton: $hoveredButton)
             FooterSection(updater: orchestrator.autoUpdater, hoveredButton: $hoveredButton)
         }

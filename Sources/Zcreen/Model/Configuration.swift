@@ -9,12 +9,22 @@ struct ProfileDef: Codable {
     let screenCount: Int
 }
 
+struct WindowFilterConfig: Codable {
+    let excludedApps: [AppMatcher]?
+    let excludedRoles: [String]?
+    let excludedSubroles: [String]?
+    let minWidth: Double?
+    let minHeight: Double?
+    let excludeMinimized: Bool?
+}
+
 struct Configuration: Codable {
     let version: Int
     let debounceMs: Int?
     let screens: [ScreenAlias]?
     let rules: [Rule]?
     let profiles: [String: ProfileDef]?
+    let windowFilter: WindowFilterConfig?
 
     var debounceMilliseconds: Int {
         debounceMs ?? 500
@@ -38,6 +48,7 @@ struct Configuration: Codable {
         debounceMs: 500,
         screens: nil,
         rules: nil,
-        profiles: nil
+        profiles: nil,
+        windowFilter: nil
     )
 }

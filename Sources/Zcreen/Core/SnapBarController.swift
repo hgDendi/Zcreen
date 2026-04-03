@@ -23,9 +23,11 @@ final class SnapBarController: ObservableObject {
     private var clickedTitleBar = false
     private var wasMouseDown = false
 
-    init(windowManager: WindowManager) {
+    init(windowManager: WindowManager, shouldStartPolling: Bool = true) {
         self.windowManager = windowManager
-        startPolling(highFrequency: false)
+        if shouldStartPolling {
+            startPolling(highFrequency: false)
+        }
     }
 
     deinit { pollTimer?.invalidate() }
@@ -108,15 +110,16 @@ final class SnapBarController: ObservableObject {
         targetWindow = win
 
         guard let wFrame = windowFrame(win) else { return }
+        guard let mainScreenFrame = CoordinateConverter.mainScreenFrame(from: NSScreen.screens.map(\.frame)) else { return }
 
-        let mouseCG = CoordinateConverter.nsToCG(mouse)
+        let mouseAX = CoordinateConverter.nsToAccessibility(mouse, mainScreenFrame: mainScreenFrame)
         let pad = Constants.SnapBar.titleBarPadding
         let titleBar = CGRect(x: wFrame.origin.x - pad,
                               y: wFrame.origin.y - pad,
                               width: wFrame.width + pad * 2,
                               height: Constants.SnapBar.titleBarHeight)
 
-        clickedTitleBar = titleBar.contains(mouseCG)
+        clickedTitleBar = titleBar.contains(mouseAX)
     }
 
     // MARK: - Drag tick: detect significant mouse movement from title bar
@@ -201,9 +204,10 @@ final class SnapBarController: ObservableObject {
 
     private func applyPreset(_ preset: LayoutPreset) {
         guard let win = targetWindow, let screen = targetScreen else { return }
+        guard let mainScreenFrame = CoordinateConverter.mainScreenFrame(from: NSScreen.screens.map(\.frame)) else { return }
 
-        let cgVisible = CoordinateConverter.nsToCG(screen.visibleFrame)
-        let frame = preset.frame(for: cgVisible)
+        let accessibilityVisible = CoordinateConverter.nsToAccessibility(screen.visibleFrame, mainScreenFrame: mainScreenFrame)
+        let frame = preset.frame(for: accessibilityVisible)
         windowManager.moveWindow(win, toFrame: frame)
         Log.general.info("Snapped '\(preset.id)' on \(screen.localizedName)")
 

@@ -7,7 +7,7 @@ final class RuleEngineTests: XCTestCase {
 
     private func makeConfig(rules: [Rule], screens: [ScreenAlias]? = nil,
                             profiles: [String: ProfileDef]? = nil) -> Configuration {
-        Configuration(version: 1, debounceMs: 500, screens: screens, rules: rules, profiles: profiles)
+        Configuration(version: 1, debounceMs: 500, screens: screens, rules: rules, profiles: profiles, windowFilter: nil)
     }
 
     func testMatchRulesReturnsMatchesForBundleId() {
@@ -19,11 +19,11 @@ final class RuleEngineTests: XCTestCase {
         let matches = engine.matchRules(configuration: config, screenCount: 2)
 
         XCTAssertEqual(matches.count, 1)
-        XCTAssertEqual(matches[0].bundleId, "com.apple.Safari")
+        XCTAssertEqual(matches[0].matchedBundleId, "com.apple.Safari")
         XCTAssertEqual(matches[0].targetScreenAlias, "main")
     }
 
-    func testMatchRulesSkipsRulesWithoutBundleId() {
+    func testMatchRulesIncludesRulesWithoutBundleId() {
         let rules = [
             Rule(app: AppMatcher(bundleId: nil, nameContains: "Chrome"),
                  targetScreen: "main", profileOverrides: nil)
@@ -31,7 +31,8 @@ final class RuleEngineTests: XCTestCase {
         let config = makeConfig(rules: rules)
         let matches = engine.matchRules(configuration: config, screenCount: 2)
 
-        XCTAssertEqual(matches.count, 0)
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertNil(matches[0].matchedBundleId)
     }
 
     func testMatchRuleUsesProfileOverride() {

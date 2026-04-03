@@ -2,8 +2,6 @@ import Cocoa
 import Combine
 
 final class Orchestrator: ObservableObject {
-    @Published var autoApplyOnScreenChange = true
-    @Published var autoApplyOnAppLaunch = true
     @Published private(set) var lastAction: String = ""
 
     let screenDetector: ScreenDetector
@@ -11,107 +9,131 @@ final class Orchestrator: ObservableObject {
     let windowManager: WindowManager
     let snapshotStore: LayoutSnapshotStore
     let ruleEngine: RuleEngine
-    var snapBarController: SnapBarController
+    let snapBarController: SnapBarController
     let caffeinateManager: CaffeinateManager
     let autoUpdater: AutoUpdater
+    let menuState: MenuState
+
+    private let screenSessionService: ScreenSessionService
+    private let snapshotService: SnapshotService
+    private let ruleApplyService: RuleApplyService
+    private let isAccessibilityTrusted: () -> Bool
+    private let requestAccessibilityAccess: () -> Void
+    private let scheduleAfter: (TimeInterval, @escaping () -> Void) -> Void
 
     private var cancellables = Set<AnyCancellable>()
-    private var previousProfileKey: String = ""
-    private var hasSavedPreChangeSnapshot = false
+    private var autoSaveTimer: Timer?
 
-    init() {
-        screenDetector = ScreenDetector()
-        configManager = ConfigManager()
-        windowManager = WindowManager()
-        snapshotStore = LayoutSnapshotStore()
-        ruleEngine = RuleEngine()
-        snapBarController = SnapBarController(windowManager: windowManager)
-        caffeinateManager = CaffeinateManager()
-        autoUpdater = AutoUpdater()
+    var autoApplyOnScreenChange: Bool {
+        get { menuState.autoApplyOnScreenChange }
+        set { menuState.autoApplyOnScreenChange = newValue }
+    }
 
-        snapBarController.onSnap = { [weak self] in
-            self?.autoSaveCurrentLayout()
+    var autoApplyOnAppLaunch: Bool {
+        get { menuState.autoApplyOnAppLaunch }
+        set { menuState.autoApplyOnAppLaunch = newValue }
+    }
+
+    init(
+        screenDetector: ScreenDetector = ScreenDetector(),
+        configManager: ConfigManager = ConfigManager(),
+        windowManager: WindowManager = WindowManager(),
+        snapshotStore: LayoutSnapshotStore = LayoutSnapshotStore(),
+        ruleEngine: RuleEngine = RuleEngine(),
+        snapBarController: SnapBarController? = nil,
+        caffeinateManager: CaffeinateManager = CaffeinateManager(),
+        autoUpdater: AutoUpdater = AutoUpdater(),
+        settingsStore: MenuSettingsStore = MenuSettingsStore(),
+        isAccessibilityTrusted: @escaping () -> Bool = { AccessibilityHelper.isTrusted },
+        requestAccessibilityAccess: @escaping () -> Void = { AccessibilityHelper.requestAccess() },
+        scheduleAfter: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, action in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
+        },
+        enableAppLaunchObserver: Bool = true,
+        enableAutoSaveTimer: Bool = true
+    ) {
+        self.screenDetector = screenDetector
+        self.configManager = configManager
+        self.windowManager = windowManager
+        self.snapshotStore = snapshotStore
+        self.ruleEngine = ruleEngine
+
+        let resolvedSnapBarController = snapBarController ?? SnapBarController(windowManager: windowManager)
+        self.snapBarController = resolvedSnapBarController
+        self.caffeinateManager = caffeinateManager
+        self.autoUpdater = autoUpdater
+
+        let resolvedMenuState = MenuState(settingsStore: settingsStore)
+        resolvedMenuState.connect(snapBarController: resolvedSnapBarController)
+        self.menuState = resolvedMenuState
+
+        let resolvedScreenSessionService = ScreenSessionService(screenDetector: screenDetector)
+        self.screenSessionService = resolvedScreenSessionService
+        self.snapshotService = SnapshotService(
+            screenSession: resolvedScreenSessionService,
+            configManager: configManager,
+            windowManager: windowManager,
+            snapshotStore: snapshotStore
+        )
+        self.ruleApplyService = RuleApplyService(
+            screenSession: resolvedScreenSessionService,
+            configManager: configManager,
+            windowManager: windowManager,
+            ruleEngine: ruleEngine,
+            scheduleAfter: scheduleAfter
+        )
+
+        self.isAccessibilityTrusted = isAccessibilityTrusted
+        self.requestAccessibilityAccess = requestAccessibilityAccess
+        self.scheduleAfter = scheduleAfter
+
+        resolvedSnapBarController.onSnap = { [weak self] in
+            self?.autoSaveCurrentLayout(trigger: .snapBar)
         }
 
-        // Forward nested ObservableObject changes so SwiftUI updates
-        snapshotStore.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }.store(in: &cancellables)
-        screenDetector.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }.store(in: &cancellables)
-        autoUpdater.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }.store(in: &cancellables)
-        configManager.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }.store(in: &cancellables)
+        forwardChanges(from: snapshotStore)
+        forwardChanges(from: screenDetector)
+        forwardChanges(from: autoUpdater)
+        forwardChanges(from: configManager)
+        forwardChanges(from: resolvedSnapBarController)
+        forwardChanges(from: resolvedMenuState)
 
-        previousProfileKey = screenDetector.profileKey
-
-        setupBeginConfigHandler()
         setupScreenChangeHandler()
-        setupAppLaunchHandler()
+        if enableAppLaunchObserver {
+            setupAppLaunchHandler()
+        }
+        if enableAutoSaveTimer {
+            setupAutoSaveTimer()
+        }
+    }
+
+    deinit {
+        autoSaveTimer?.invalidate()
     }
 
     // MARK: - Public actions
 
     func applyAllRules() {
-        guard AccessibilityHelper.isTrusted else {
-            lastAction = "Accessibility permission required"
-            AccessibilityHelper.requestAccess()
-            return
-        }
+        guard ensureAccessibilityPermission(promptIfNeeded: true) else { return }
 
-        let config = configManager.configuration
-        guard !config.effectiveRules.isEmpty else {
-            lastAction = "No rules configured"
-            return
-        }
-
-        let matches = ruleEngine.matchRules(configuration: config, screenCount: screenDetector.screenCount)
-        var applied = 0
-
-        for match in matches {
-            guard let targetScreen = screenDetector.screenInfo(forAlias: match.targetScreenAlias, configuration: config)
-            else { continue }
-
-            let windows = windowManager.getWindows(bundleId: match.bundleId)
-            for win in windows {
-                if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) { continue }
-                windowManager.moveWindowToScreen(win.axWindow, currentFrame: win.frame, targetScreen: targetScreen)
-                applied += 1
-            }
-        }
-
-        lastAction = "Applied \(applied) rule moves"
-        Log.rule.info("\(self.lastAction)")
+        let result = ruleApplyService.applyAllRules()
+        lastAction = result.statusMessage
+        Log.rule.info("\(self.lastAction, privacy: .public)")
     }
 
     func saveCurrentLayout() {
-        guard AccessibilityHelper.isTrusted else {
-            lastAction = "Accessibility permission required"
-            AccessibilityHelper.requestAccess()
-            return
-        }
+        guard ensureAccessibilityPermission(promptIfNeeded: true) else { return }
 
-        let snapshot = snapshotStore.captureSnapshot(
-            profileKey: screenDetector.profileKey,
-            profileLabel: screenDetector.profileLabel,
-            windowManager: windowManager,
-            screens: screenDetector.screens
-        )
-        snapshotStore.save(snapshot: snapshot)
-        lastAction = "Saved layout (\(snapshot.windows.count) windows)"
+        let result = snapshotService.saveCurrentLayout(trigger: .manual, force: true)
+        if let statusMessage = result.statusMessage {
+            lastAction = statusMessage
+        }
     }
 
-    // MARK: - Pre-change snapshot (beginConfigurationFlag)
+    func restoreCurrentLayout() {
+        guard ensureAccessibilityPermission(promptIfNeeded: true) else { return }
 
-    private func setupBeginConfigHandler() {
-        // Disabled: beginConfigurationFlag fires AFTER macOS has already moved windows
-        // to the remaining screens, so the "pre-change" snapshot contains crammed data
-        // and overwrites the good snapshot from Snap Bar / periodic save.
-        // We rely on onSnap + periodic auto-save to keep snapshots up to date.
+        lastAction = snapshotService.restoreCurrentLayout().statusMessage
     }
 
     // MARK: - Post-change restore
@@ -119,44 +141,32 @@ final class Orchestrator: ObservableObject {
     private func setupScreenChangeHandler() {
         screenDetector.onScreensChanged
             .sink { [weak self] newProfileKey in
-                guard let self, self.autoApplyOnScreenChange else { return }
+                guard let self, self.menuState.autoApplyOnScreenChange else { return }
                 self.handleScreenChange(newProfileKey: newProfileKey)
             }
             .store(in: &cancellables)
     }
 
-    private func handleScreenChange(newProfileKey: String) {
-        guard AccessibilityHelper.isTrusted else { return }
+    func handleScreenChange(newProfileKey: String) {
+        guard ensureAccessibilityPermission(promptIfNeeded: false) else { return }
 
-        let oldProfileKey = previousProfileKey
-        let newLabel = screenDetector.profileLabel
-        Log.general.info("Screen change: '\(oldProfileKey)' -> '\(newProfileKey)' (\(newLabel))")
+        let context = screenSessionService.beginScreenChange(to: newProfileKey)
+        Log.general.info("Screen change: '\(context.oldProfileKey)' -> '\(context.newProfileKey)' (\(context.newProfileLabel))")
 
-        hasSavedPreChangeSnapshot = false
-
-        if let snapshot = snapshotStore.load(profileKey: newProfileKey) {
-            snapshotStore.restoreSnapshot(snapshot, windowManager: windowManager, excludeBundleIds: [])
-            lastAction = "Restored layout for \(newLabel)"
-            Log.snapshot.info("Restored \(snapshot.windows.count) windows for '\(newLabel)'")
-        } else {
-            let config = configManager.configuration
-            if !config.effectiveRules.isEmpty {
-                let matches = ruleEngine.matchRules(configuration: config, screenCount: screenDetector.screenCount)
-                for match in matches {
-                    guard let targetScreen = screenDetector.screenInfo(forAlias: match.targetScreenAlias, configuration: config)
-                    else { continue }
-                    let windows = windowManager.getWindows(bundleId: match.bundleId)
-                    for win in windows {
-                        if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) { continue }
-                        windowManager.moveWindowToScreen(win.axWindow, currentFrame: win.frame, targetScreen: targetScreen)
-                    }
-                }
-            }
-            lastAction = "New screen combo: \(newLabel)"
-            Log.snapshot.info("No snapshot for '\(newLabel)', used rules as fallback")
+        let restoreResult = snapshotService.restoreLayout(
+            profileKey: context.newProfileKey,
+            profileLabel: context.newProfileLabel
+        )
+        switch restoreResult {
+        case .restored:
+            lastAction = restoreResult.statusMessage
+        case .missing:
+            _ = ruleApplyService.applyFallbackRulesIfAvailable()
+            lastAction = "New screen combo: \(context.newProfileLabel)"
+            Log.snapshot.info("No snapshot for '\(context.newProfileLabel)', used rules as fallback")
         }
 
-        previousProfileKey = newProfileKey
+        scheduleDelayedAutoSave(trigger: .screenChange, delay: Constants.Timing.screenChangeAutoSaveDelay)
     }
 
     // MARK: - App launch rules
@@ -166,68 +176,64 @@ final class Orchestrator: ObservableObject {
             .publisher(for: NSWorkspace.didLaunchApplicationNotification)
             .compactMap { $0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication }
             .sink { [weak self] app in
-                guard let self, self.autoApplyOnAppLaunch else { return }
-                self.handleAppLaunch(app)
+                guard let self, self.menuState.autoApplyOnAppLaunch else { return }
+                self.handleAppLaunch(bundleId: app.bundleIdentifier, appName: app.localizedName)
             }
             .store(in: &cancellables)
     }
 
-    private func handleAppLaunch(_ app: NSRunningApplication) {
-        guard AccessibilityHelper.isTrusted else { return }
+    func handleAppLaunch(bundleId: String?, appName: String?) {
+        guard ensureAccessibilityPermission(promptIfNeeded: false) else { return }
 
-        let config = configManager.configuration
-        guard !config.effectiveRules.isEmpty else { return }
+        ruleApplyService.handleAppLaunch(bundleId: bundleId, appName: appName) { [weak self] result in
+            guard let self, let result else { return }
 
-        let bundleId = app.bundleIdentifier
-        let appName = app.localizedName
-
-        guard let match = ruleEngine.matchRule(
-            for: bundleId, appName: appName,
-            configuration: config,
-            screenCount: screenDetector.screenCount
-        ) else { return }
-
-        guard let targetScreen = screenDetector.screenInfo(forAlias: match.targetScreenAlias, configuration: config)
-        else { return }
-
-        // Poll for windows instead of fixed delay — handles both fast and slow apps
-        waitForWindows(bundleId: match.bundleId) { [weak self] windows in
-            guard let self else { return }
-            for win in windows {
-                if targetScreen.frame.contains(CGPoint(x: win.frame.midX, y: win.frame.midY)) { continue }
-                self.windowManager.moveWindowToScreen(win.axWindow, currentFrame: win.frame, targetScreen: targetScreen)
-            }
-            Log.rule.info("Launch rule: \(appName ?? "unknown") -> \(match.targetScreenAlias)")
-            self.lastAction = "Moved \(appName ?? "app") to \(match.targetScreenAlias)"
+            self.lastAction = result.statusMessage
+            self.scheduleDelayedAutoSave(trigger: .appLaunch, delay: Constants.Timing.appLaunchAutoSaveDelay)
         }
     }
 
-    /// Poll for windows of an app until they appear, with exponential backoff timeout
-    private func waitForWindows(bundleId: String, attempt: Int = 1,
-                                action: @escaping ([WindowManager.WindowInfo]) -> Void) {
-        let windows = windowManager.getWindows(bundleId: bundleId)
-        if !windows.isEmpty {
-            action(windows)
-        } else if attempt < Constants.Timing.appLaunchPollMaxAttempts {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Constants.Timing.appLaunchPollInterval) { [weak self] in
-                self?.waitForWindows(bundleId: bundleId, attempt: attempt + 1, action: action)
-            }
-        } else {
-            Log.rule.info("Launch rule: gave up waiting for windows of \(bundleId) after \(Constants.Timing.appLaunchPollMaxAttempts) attempts")
+    private func setupAutoSaveTimer() {
+        let timer = Timer(timeInterval: Constants.Timing.layoutAutoSaveInterval, repeats: true) { [weak self] _ in
+            self?.autoSaveCurrentLayout(trigger: .periodic)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        autoSaveTimer = timer
+    }
+
+    private func scheduleDelayedAutoSave(trigger: SnapshotService.Trigger, delay: TimeInterval) {
+        scheduleAfter(delay) { [weak self] in
+            self?.autoSaveCurrentLayout(trigger: trigger)
         }
     }
 
-    private func autoSaveCurrentLayout() {
-        guard AccessibilityHelper.isTrusted else { return }
+    func performPeriodicAutoSaveForTesting() {
+        autoSaveCurrentLayout(trigger: .periodic)
+    }
 
-        let snapshot = snapshotStore.captureSnapshot(
-            profileKey: screenDetector.profileKey,
-            profileLabel: screenDetector.profileLabel,
-            windowManager: windowManager,
-            screens: screenDetector.screens
-        )
+    private func autoSaveCurrentLayout(trigger: SnapshotService.Trigger) {
+        guard ensureAccessibilityPermission(promptIfNeeded: false) else { return }
+        _ = snapshotService.saveCurrentLayout(trigger: trigger, force: false)
+    }
 
-        guard !snapshot.windows.isEmpty else { return }
-        snapshotStore.save(snapshot: snapshot)
+    @discardableResult
+    private func ensureAccessibilityPermission(promptIfNeeded: Bool) -> Bool {
+        guard isAccessibilityTrusted() else {
+            if promptIfNeeded {
+                lastAction = "Accessibility permission required"
+                requestAccessibilityAccess()
+            }
+            return false
+        }
+
+        return true
+    }
+
+    private func forwardChanges<Object: ObservableObject>(from object: Object) {
+        object.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
     }
 }

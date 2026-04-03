@@ -31,9 +31,11 @@ final class ScreenDetector: ObservableObject {
         beginConfigSubject.eraseToAnyPublisher()
     }
 
-    init() {
+    init(shouldRegisterCallback: Bool = true) {
         refreshScreens()
-        registerCallback()
+        if shouldRegisterCallback {
+            registerCallback()
+        }
     }
 
     deinit {
@@ -131,8 +133,15 @@ final class ScreenDetector: ObservableObject {
 
         if flags.contains(.addFlag) || flags.contains(.removeFlag) ||
            flags.contains(.movedFlag) || flags.contains(.setMainFlag) {
-            screenChangeSubject.send()
+           screenChangeSubject.send()
         }
+    }
+
+    func setStateForTesting(screens: [ScreenInfo], profileKey: String? = nil, profileLabel: String? = nil) {
+        let sorted = screens.sorted { $0.frame.origin.x < $1.frame.origin.x }
+        self.screens = assignPositions(sorted)
+        self.profileKey = profileKey ?? generateProfileKey(from: self.screens)
+        self.profileLabel = profileLabel ?? generateProfileLabel(from: self.screens)
     }
 }
 
