@@ -84,31 +84,15 @@ final class SnapBarController: ObservableObject {
     // MARK: - Mouse Down: check if click is in a window's title bar
 
     private func onMouseDown(_ mouse: NSPoint) {
-        switchToHighFrequency()
-        dragState = .tracking
-        tickCount = 0
-        initialMousePos = mouse
-        clickedTitleBar = false
-        targetWindow = nil
-
+        // 先做所有 "获取信息" 的 guard，全部成功后再修改状态。
+        // 任何 guard fail 都不会留下副作用（dragState 仍为 .idle，仍处于低频轮询）。
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.bundleIdentifier != Bundle.main.bundleIdentifier,
               app.activationPolicy == .regular
-        else {
-            dragState = .idle
-            switchToLowFrequency()
-            return
-        }
+        else { return }
 
         let appEl = AXUIElementCreateApplication(app.processIdentifier)
-        guard let win = focusedWindow(of: appEl) ?? firstWindow(of: appEl) else {
-            dragState = .idle
-            switchToLowFrequency()
-            return
-        }
-
-        targetWindow = win
-
+        guard let win = focusedWindow(of: appEl) ?? firstWindow(of: appEl) else { return }
         guard let wFrame = windowFrame(win) else { return }
         guard let mainScreenFrame = CoordinateConverter.mainScreenFrame(from: NSScreen.screens.map(\.frame)) else { return }
 
@@ -119,6 +103,12 @@ final class SnapBarController: ObservableObject {
                               width: wFrame.width + pad * 2,
                               height: Constants.SnapBar.titleBarHeight)
 
+        // 进入 tracking 才切高频，避免没目标窗口也升频空转
+        switchToHighFrequency()
+        dragState = .tracking
+        tickCount = 0
+        initialMousePos = mouse
+        targetWindow = win
         clickedTitleBar = titleBar.contains(mouseAX)
     }
 
