@@ -95,12 +95,14 @@ final class Orchestrator: ObservableObject {
             self?.autoSaveCurrentLayout(trigger: .snapBar)
         }
 
-        forwardChanges(from: snapshotStore)
-        forwardChanges(from: screenDetector)
-        forwardChanges(from: autoUpdater)
-        forwardChanges(from: configManager)
-        forwardChanges(from: resolvedSnapBarController)
-        forwardChanges(from: resolvedMenuState)
+        forwardChanges(
+            snapshotStore.objectWillChange.eraseToAnyPublisher(),
+            screenDetector.objectWillChange.eraseToAnyPublisher(),
+            autoUpdater.objectWillChange.eraseToAnyPublisher(),
+            configManager.objectWillChange.eraseToAnyPublisher(),
+            resolvedSnapBarController.objectWillChange.eraseToAnyPublisher(),
+            resolvedMenuState.objectWillChange.eraseToAnyPublisher()
+        )
 
         setupScreenChangeHandler()
         if enableAppLaunchObserver {
@@ -154,7 +156,7 @@ final class Orchestrator: ObservableObject {
     func handleScreenChange(newProfileKey: String) {
         guard ensureAccessibilityPermission(promptIfNeeded: false) else { return }
 
-        let context = screenSessionService.beginScreenChange(to: newProfileKey)
+        let context = screenSessionService.recordScreenChange(to: newProfileKey)
         Log.general.info("Screen change: '\(context.oldProfileKey)' -> '\(context.newProfileKey)' (\(context.newProfileLabel))")
 
         let restoreResult = snapshotService.restoreLayout(
@@ -233,8 +235,12 @@ final class Orchestrator: ObservableObject {
         return true
     }
 
-    private func forwardChanges<Object: ObservableObject>(from object: Object) {
-        object.objectWillChange
+    /// Merge several `objectWillChange` publishers into a single sink so SwiftUI receives one
+    /// "parent changed" event per child mutation without N independent subscriptions.
+    /// The publishers are erased to a common type because each ObservableObject's
+    /// `ObjectWillChangePublisher` is concretely different.
+    private func forwardChanges(_ publishers: AnyPublisher<Void, Never>...) {
+        Publishers.MergeMany(publishers)
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }

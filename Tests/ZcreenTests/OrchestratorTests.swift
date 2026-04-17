@@ -26,7 +26,7 @@ final class OrchestratorTests: XCTestCase {
         let session = ScreenSessionService(screenDetector: detector)
 
         detector.setStateForTesting(screens: [newScreen], profileKey: "new-profile", profileLabel: "New")
-        let context = session.beginScreenChange(to: "new-profile")
+        let context = session.recordScreenChange(to: "new-profile")
 
         XCTAssertEqual(context.oldProfileKey, "old-profile")
         XCTAssertEqual(context.newProfileKey, "new-profile")

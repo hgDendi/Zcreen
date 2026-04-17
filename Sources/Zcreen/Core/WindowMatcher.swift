@@ -32,32 +32,31 @@ struct WindowMatchAssignment {
 
 enum WindowMatcher {
     static func match(saved: [WindowSnapshot], running: [WindowMatchCandidate]) -> [WindowMatchAssignment] {
-        var unmatchedSaved = Array(saved.indices)
-        var unmatchedRunning = Array(running.indices)
-        var assignments: [WindowMatchAssignment] = []
-
-        while !unmatchedSaved.isEmpty && !unmatchedRunning.isEmpty {
-            var best: WindowMatchAssignment?
-
-            for savedIndex in unmatchedSaved {
-                for runningIndex in unmatchedRunning {
-                    let score = score(saved: saved[savedIndex], running: running[runningIndex])
-                    let candidate = WindowMatchAssignment(
-                        savedIndex: savedIndex,
-                        runningIndex: runningIndex,
-                        score: score
-                    )
-
-                    if best == nil || candidate.score > best!.score {
-                        best = candidate
-                    }
-                }
+        // Compute every (saved, running) pair once, then greedily pick best-score pairs while
+        // skipping already-claimed indices. Behaviorally equivalent to repeatedly scanning for the
+        // current max but O(N² log N) instead of O(N³).
+        var pairs: [WindowMatchAssignment] = []
+        pairs.reserveCapacity(saved.count * running.count)
+        for savedIndex in saved.indices {
+            for runningIndex in running.indices {
+                let s = score(saved: saved[savedIndex], running: running[runningIndex])
+                pairs.append(WindowMatchAssignment(savedIndex: savedIndex, runningIndex: runningIndex, score: s))
             }
+        }
+        pairs.sort { $0.score > $1.score }
 
-            guard let best else { break }
-            assignments.append(best)
-            unmatchedSaved.removeAll { $0 == best.savedIndex }
-            unmatchedRunning.removeAll { $0 == best.runningIndex }
+        var usedSaved = Set<Int>()
+        var usedRunning = Set<Int>()
+        var assignments: [WindowMatchAssignment] = []
+        let limit = min(saved.count, running.count)
+        assignments.reserveCapacity(limit)
+
+        for pair in pairs {
+            if assignments.count == limit { break }
+            if usedSaved.contains(pair.savedIndex) || usedRunning.contains(pair.runningIndex) { continue }
+            assignments.append(pair)
+            usedSaved.insert(pair.savedIndex)
+            usedRunning.insert(pair.runningIndex)
         }
 
         return assignments

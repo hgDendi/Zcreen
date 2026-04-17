@@ -271,21 +271,12 @@ class LayoutSnapshotStore: ObservableObject {
     }
 
     private func compareWindowSnapshots(_ lhs: WindowSnapshot, _ rhs: WindowSnapshot) -> Bool {
-        if lhs.bundleId != rhs.bundleId { return lhs.bundleId < rhs.bundleId }
-        if lhs.appName != rhs.appName { return lhs.appName < rhs.appName }
-        let lhsTitle = lhs.windowTitle ?? ""
-        let rhsTitle = rhs.windowTitle ?? ""
-        if lhsTitle != rhsTitle { return lhsTitle < rhsTitle }
-        let lhsRole = lhs.windowRole ?? ""
-        let rhsRole = rhs.windowRole ?? ""
-        if lhsRole != rhsRole { return lhsRole < rhsRole }
-        let lhsSubrole = lhs.windowSubrole ?? ""
-        let rhsSubrole = rhs.windowSubrole ?? ""
-        if lhsSubrole != rhsSubrole { return lhsSubrole < rhsSubrole }
-        if lhs.screenName != rhs.screenName { return lhs.screenName < rhs.screenName }
-        if lhs.frame.x != rhs.frame.x { return lhs.frame.x < rhs.frame.x }
-        if lhs.frame.y != rhs.frame.y { return lhs.frame.y < rhs.frame.y }
-        if lhs.frame.width != rhs.frame.width { return lhs.frame.width < rhs.frame.width }
-        return lhs.frame.height < rhs.frame.height
+        // Lexicographic order over a stable key tuple. Split into two tuples because Swift only
+        // synthesizes Comparable for tuples up to 6 elements.
+        let lKey1 = (lhs.bundleId, lhs.appName, lhs.windowTitle ?? "", lhs.windowRole ?? "", lhs.windowSubrole ?? "", lhs.screenName)
+        let rKey1 = (rhs.bundleId, rhs.appName, rhs.windowTitle ?? "", rhs.windowRole ?? "", rhs.windowSubrole ?? "", rhs.screenName)
+        if lKey1 != rKey1 { return lKey1 < rKey1 }
+        return (lhs.frame.x, lhs.frame.y, lhs.frame.width, lhs.frame.height) <
+               (rhs.frame.x, rhs.frame.y, rhs.frame.width, rhs.frame.height)
     }
 }

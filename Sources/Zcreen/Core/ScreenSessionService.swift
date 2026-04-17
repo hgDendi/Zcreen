@@ -19,7 +19,9 @@ final class ScreenSessionService {
     var currentScreens: [ScreenInfo] { screenDetector.screens }
     var screenCount: Int { screenDetector.screenCount }
 
-    func beginScreenChange(to newProfileKey: String) -> ScreenChangeContext {
+    /// Record a completed screen reconfiguration. Called after macOS settles, despite the
+    /// historical name; returns the (old, new) context and advances `previousProfileKey`.
+    func recordScreenChange(to newProfileKey: String) -> ScreenChangeContext {
         let context = ScreenChangeContext(
             oldProfileKey: previousProfileKey,
             newProfileKey: newProfileKey,
